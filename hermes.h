@@ -1,0 +1,25 @@
+/*
+
+ * hv.h
+ *
+ * Created: 12/9/2016 12:02:34 PM
+ *  Author: Neil Klingensmith
+ */ 
+
+
+#ifndef HV_H_
+#define HV_H_
+
+struct vm {
+	struct vm *next;
+	struct vm *prev;
+
+	void *vectorTable;
+};
+
+
+
+void hvInit() ;
+
+
+#endif /* HV_H_ */
