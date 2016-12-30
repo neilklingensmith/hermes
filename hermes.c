@@ -19,48 +19,26 @@ uint32_t getIPSR() __attribute__((naked));
 uint32_t getIPSR() {
 	__asm("  mrs r0, IPSR\n"
 	      "  bx lr\n");
-
-	// Avoid compiler warning "control reaches end of a non-void function." The real return statement is the bx lr above.
-	//return(0);
 }
 
-
-extern void SVC_Handler() ;
+/*
+ * locateGuestISR(int interruptNum)
+ *
+ * Parses the guest's exception table, and returns the address of the guest's
+ * exception handler associated with interruptNum, the exception number.
+ */
 int *locateGuestISR(int interruptNum){
 	return (int*)guestExceptionTable[interruptNum]; // stub that returns function pointer to guest exception table.
-/*
-		switch(interruptNum){
-		case 2: // NMI
-			break;
-		case 3: // HardFault
-			break;
-		case 4: // MemManage
-			break;
-		case 5: // BusFault
-			break;
-		case 6: // UsageFault
-			break;
-		case 7:	 // Reserved
-		case 8:
-		case 9:
-		case 10:
-			break;
-		case 11: // SVCall
-			break;
-		case 12: // Reserved for debug
-		case 13: // Reserved
-			break;
-		case 14: // PendSV
-			break;
-		case 15: // SysTick
-			break;
-		default: // Higher-order interrupt numbers are chip-specific.
-			break;
-		}
-*/
 }
+
+/*
+ * genericHandler()
+ *
+ * Hermes exception handler for all exceptions.
+ */
 void genericHandler() __attribute__((naked));
 void genericHandler() {
+
 	__asm volatile
 	(
 	"  mov.w r3, #128\n" // Copied from FreeRTOS code
@@ -70,10 +48,49 @@ void genericHandler() {
 	"  dsb sy\n"           // Sync D$
 	"  cpsie i\n"
 	"  push {lr}\n" // Save LR so we don't overwrite in function call.
-	"  mrs r0, IPSR\n" // Read IPSR to get exception number
-	"  bl locateGuestISR\n" // Get the address of the guest's exception handler corresponding to the exception number
+
+	);
+
+	int exceptionNum = getIPSR(); // Read IPSR to get exception number
+	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
+
+
+	switch(exceptionNum){
+	case 2: // NMI
+		break;
+	case 3: // HardFault
+		break;
+	case 4: // MemManage
+		break;
+	case 5: // BusFault
+		break;
+	case 6: // UsageFault
+		break;
+	case 7:	 // Reserved
+	case 8:
+	case 9:
+	case 10:
+		break;
+	case 11: // SVCall
+		break;
+	case 12: // Reserved for debug
+	case 13: // Reserved
+		break;
+	case 14: // PendSV
+		break;
+	case 15: // SysTick
+		break;
+	default: // Higher-order interrupt numbers are chip-specific.
+		break;
+	}
+
+	__asm volatile
+	(
 	"  pop {lr}\n" // Restore the link reg--ALERT: we may need to modify the LR before performing an exception return.
-	"  bx r0\n"
+	"  bx %0\n"
+	:                          /* output */
+	:"r"(guestExceptionVector) /* input */
+	:                          /* clobbered register */
 	);
 }
 
