@@ -10,6 +10,10 @@
 #ifndef HV_H_
 #define HV_H_
 
+
+#define HV_STACK_SIZE 512
+
+
 struct vm {
 	struct vm *next;
 	struct vm *prev;
@@ -19,7 +23,7 @@ struct vm {
 
 
 
-void hvInit() ;
+void hvInit(void*) __attribute__((naked));
 
 
 #endif /* HV_H_ */

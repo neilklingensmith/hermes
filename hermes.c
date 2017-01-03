@@ -2,11 +2,85 @@
 #include "hermes.h"
 #include <stdint.h>
 
+char hvStack[HV_STACK_SIZE];
 
 int **guestExceptionTable;
 
 void hvInit(void *gET) {
+	uint32_t oldMSP;
+	uint32_t returnAddress;
+	
+	// Save regs & preserve MSP
+	__asm volatile
+	(
+	"  push {r1-r12,r14}\n"
+	"  mrs %0,msp\n"
+	"  msr psp,%0\n"
+	:                   /* output */
+	:"r"(oldMSP) /* input */
+	:                   /* clobbered register */
+	);
+	uint32_t stackTop = (uint32_t)hvStack+HV_STACK_SIZE-4*14;
+	int *src = (int*)oldMSP, *dst = (int*)stackTop;
+/*
+	for(int k = 0; k < 14; k++){
+		*dst++ = *src++;
+	}
+*/
+	// Save return address
+	__asm volatile
+	(
+	"  mov %0,r14\n"
+	:"=r"(returnAddress) /* output */
+	:                    /* input */
+	:                    /* clobbered register */
+	);
+	
+	// Copy register contents from old stack to new stack
+	
+	// Set up guest data structures.
 	guestExceptionTable = gET;
+	
+	// Update main stack pointer with HV's top of stack.
+	__asm volatile
+	(
+	"  msr msp,%0\n"
+	:                   /* output */
+	:"r"(stackTop) /* input */
+	:                   /* clobbered register */
+	);
+	// Switch to unpriv execution
+	__asm volatile
+	(
+	"  mrs r0,psp\n"      // Get PSP in R0
+	"  ldm r0!,{r1-r12,r14}\n" // Get saved regs off PSP
+	"  mrs r0,control\n"
+	"  orr r0,r0,#3\n"
+	"  msr control,r0\n"
+	);
+#if 0
+	// Restore regs
+	__asm volatile
+	(
+	"  mrs r0,psp\n"      // Get PSP in R0
+//	"  ldm r0!,{r1-r12,r14}\n" // Get saved regs off PSP
+	"  add r0,-32\n"      // Build an exception frame on the stack
+	"  msr psp,r0\n"      // Update PSP
+	"  str r0,[r0,#28]\n" // Put dummy xPSR on exception frame
+	"  str %0,[r0,#24]\n" // Put the address of the guest exception vector on the stack frame--this is the return PC
+	"  str lr,[r0,#20]\n" // Put the LR on the guest exception frame. XXX This needs to be changed--modify LR to always return to thread mode.
+	"  str r12,[r0,#16]\n" // Zero-out the saved registers
+	"  str r3,[r0,#12]\n"
+	"  str r2,[r0,#8]\n"
+	"  str r1,[r0,#4]\n"
+	"  str r0,[r0,#0]\n"
+	"  ldr lr, =0xfffffffd\n"  // Overwrite LR, forcing exception return to thread mode
+	"  bx lr\n"
+	:                   /* output */
+	:"r"(returnAddress) /* input */
+	:                   /* clobbered register */
+	);
+#endif
 }
 
 /*
@@ -36,6 +110,7 @@ int *locateGuestISR(int interruptNum){
  *
  * Hermes exception handler for all exceptions.
  */
+#if 0
 void genericHandler() __attribute__((naked));
 void genericHandler() {
 
@@ -93,6 +168,74 @@ void genericHandler() {
 	:                          /* clobbered register */
 	);
 }
+#endif
+
+void genericHandler() __attribute__((naked));
+void genericHandler() {
+
+	int exceptionNum = getIPSR(); // Read IPSR to get exception number
+	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
+	uint16_t *offendingInstruction; // Address of instruction that caused the exception
+
+	// Save regs & preserve MSP
+	__asm volatile
+	(
+	"  mrs r0,psp\n"
+	"  ldr  %0,[r0,#24]"
+	:                   /* output */
+	:"r"(offendingInstruction) /* input */
+	:"r0"                   /* clobbered register */
+	);
+
+	switch(exceptionNum){
+		case 2: // NMI
+			break;
+		case 3: // HardFault
+			break;
+		case 4: // MemManage
+			break;
+		case 5: // BusFault
+			break;
+		case 6: // UsageFault
+			break;
+		case 7:	 // Reserved
+		case 8:
+		case 9:
+		case 10:
+			break;
+		case 11: // SVCall
+			break;
+		case 12: // Reserved for debug
+		case 13: // Reserved
+			break;
+		case 14: // PendSV
+			break;
+		case 15: // SysTick
+			break;
+		default: // Higher-order interrupt numbers are chip-specific.
+			break;
+	}
+
+	__asm volatile
+	(
+	"  ldr r0,=0\n"
+	"  add sp,-32\n"      // Build an exception frame on the stack
+	"  str r0,[sp,#28]\n" // Put dummy xPSR on exception frame
+	"  str %0,[sp,#24]\n" // Put the address of the guest exception vector on the stack frame--this is the return PC
+	"  str lr,[sp,#20]\n" // Put the LR on the guest exception frame. XXX This needs to be changed--modify LR to always return to thread mode.
+	"  str r0,[sp,#16]\n" // Zero-out the saved registers
+	"  str r0,[sp,#12]\n"
+	"  str r0,[sp,#8]\n"
+	"  str r0,[sp,#4]\n"
+	"  str r0,[sp,#0]\n"
+	"  ldr lr, =0xfffffffd\n"  // Overwrite LR, forcing exception return to thread mode
+	"  bx lr\n"
+	:                          /* output */
+	:"r"(guestExceptionVector) /* input */
+	:                          /* clobbered register */
+	);
+}
+
 
 extern unsigned long _estack;
 
