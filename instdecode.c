@@ -6,6 +6,7 @@
  */ 
 
 #include "instdecode.h"
+#include <string.h>
 
 int instDecode(struct inst *instruction, uint16_t *location){
 	uint16_t encoding = *location; // Get the opcode
@@ -18,9 +19,9 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		instruction->type = THUMB_TYPE_BRANCH;
 		instruction->Rm = (encoding>>3) & 0xf;
 		if(((encoding>>7) & 1) == 1) {
-			instruction->mnemonic = "BLX";
-		else {
-			instruction->mnemonic = "BL";
+			strcpy(instruction->mnemonic, "BLX");
+		} else {
+			strcpy(instruction->mnemonic, "BL");
 		}
 	}else if ((encoding & THUMB_MASK_UNDEF) == THUMB_OPCODE_UNDEF){
 		// Undefined instruction
@@ -184,12 +185,10 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		instruction->Rd = encoding & 7;
 		instruction->Rn = (encoding>>3) & 7;
 		instruction->imm = (encoding>>6) & 0x1f;
-		if((encoding>>11)& 1 == 0){
+		if(((encoding>>11)& 1) == 0){
 			strcpy(instruction->mnemonic, "STRH");
-			break;
-		else {
+		} else {
 			strcpy(instruction->mnemonic, "LDRH");
-			break;
 		}
 	}else if ((encoding & THUMB_MASK_LDSTSTACK) == THUMB_OPCODE_LDSTSTACK){
 		// Load/store from/to stack
@@ -197,21 +196,19 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		instruction->Rd = (encoding>>8) & 0x7;
 		instruction->imm = encoding & 0xff;
 		if(((encoding>>11) & 1) == 0) {
-			instruction->mnemonic = "STR";
-		else {
-			instruction->mnemonic = "LDR";
+			strcpy(instruction->mnemonic, "STR");
+		} else {
+			strcpy(instruction->mnemonic, "LDR");
 		}
 	}else if ((encoding & THUMB_MASK_ADDSPPC) == THUMB_OPCODE_ADDSPPC){
 		// Add to SP or PC
 		instruction->type = THUMB_TYPE_ADDSPPC;
 		instruction->Rd = (encoding>>8) & 7;
 		instruction->imm = encoding & 0xff;
-		if((encoding>>11)& 1 == 0){
+		if(((encoding>>11)& 1) == 0){
 			strcpy(instruction->mnemonic, "ADR");
-			break;
-		else {
+		} else {
 			strcpy(instruction->mnemonic, "ADD");
-			break;
 		}
 	}else if ((encoding & THUMB_MASK_MISC) == THUMB_OPCODE_MISC){
 		// Misc instructions
@@ -221,12 +218,10 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		instruction->type = THUMB_TYPE_LDSTM;
 		instruction->Rn = (encoding>>8) & 7;
 		instruction->imm = encoding & 0xff; // Represents register list
-		if((encoding>>11)& 1 == 0){ // STMIA/STMEA
+		if(((encoding>>11)& 1) == 0){ // STMIA/STMEA
 			strcpy(instruction->mnemonic, "STMIA");
-			break;
-		else { // LDMIA/LDMFD
+		} else { // LDMIA/LDMFD
 			strcpy(instruction->mnemonic, "LDMIA");
-			break;
 		}
 	}else if ((encoding & THUMB_MASK_BRCOND) == THUMB_OPCODE_BRCOND){
 		// Conditional branch

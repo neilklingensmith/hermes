@@ -2,21 +2,25 @@
 #include "hermes.h"
 #include "instdecode.h"
 #include <stdint.h>
+#include <string.h>
 
 char hvStack[HV_STACK_SIZE];
 
 int **guestExceptionTable;
 
+char privexe[32]; // memory to hold code to execute privileged instructions.
 
-// Execute the offending instruction... (TBD)
-uint16_t dummyfunc[] = {0xf3bf, // dsb sy...
-	0x8f4f, //
-	0xf3bf, // isb sy...
-	0x8f6f, //
-	0xbf00, // nop
-	0xbf00, // nop
-	0x4770, // bl lr
-};
+void dummyfunc() __attribute__((naked));
+void dummyfunc()
+{
+	__asm volatile (
+	"  ldr r1,=guest_regs\n" // NOTE TO SELF: should probably push all registers onto the stack here before restoring regs from guest_regs.
+	"  ldm r1,{r0-r12,r14}\n"
+	"  nop\n"
+	"  nop\n"
+	"  bx lr\n"
+	);
+}
 
 void hvInit(void *gET) {
 	uint32_t oldMSP = 0;
@@ -51,6 +55,9 @@ void hvInit(void *gET) {
 	guestExceptionTable = gET;
 	
 	SHCSR = (1<<18) | (1<<17); // Enable bus and usage faults
+	
+	char *srcptr = &dummyfunc;
+	memcpy(privexe, srcptr-1, 20); // Copy dummyfunc into privexe array
 
 	// Update main stack pointer with HV's top of stack.
 	__asm volatile
@@ -69,24 +76,6 @@ void hvInit(void *gET) {
 	"  orr r0,r0,#3\n"
 	"  msr control,r0\n"
 	);
-
-
-/////////////////////////////////////////////
-// DEBUG ONLY !!!!!!!
-
-
-
-
-void (*fakefunc)(void) = meatshank | 1; // not working
-(*fakefunc)();
-
-/////////////////////////////////////////////
-// END DEBUG ONLY !!!!!!!
-
-
-
-
-
 
 
 	// return
@@ -143,8 +132,26 @@ int *locateGuestISR(int interruptNum){
 	return (int*)guestExceptionTable[interruptNum]; // stub that returns function pointer to guest exception table.
 }
 
-//void genericHandler() __attribute__((naked));
-void genericHandler() {
+uint32_t guest_regs[15];
+void genericHandler() __attribute__((naked));
+void genericHandler(){
+	// Save the guest registers into the guest registers array
+	__asm volatile (
+	"  ldr r0,=guest_regs+4\n" // Use R0 to point to the guest_regs array
+	"  stm r0,{r1-r12,r14}\n"  // Store guest registers
+	"  sub r0,r0,4\n"
+	"  mrs r1,psp\n"          // Point R1 to the PSP (exception stack frame)
+	"  ldr r1,[r1]\n"          // Retrieve guest's R0 from the exception stack frame (store it in R1)
+	"  str r1, [r0]\n"
+	"  push {lr}\n"
+	"  bl exceptionProcessor\n"
+	"  pop {lr}\n"
+	"  bx lr\n"
+	);
+}
+
+
+void exceptionProcessor() {
 
 	int exceptionNum = getIPSR(); // Read IPSR to get exception number
 	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
@@ -173,7 +180,7 @@ void genericHandler() {
 	"  push {lr}\n"
 	"  isb sy\n"
 	"  dsb sy\n"
-	"  ldr r0,=dummyfunc\n"
+	"  ldr r0,=privexe\n"
 	"  orr r0,r0,1\n" // Set the LSB to enable thumb execution mode
 	"  blx r0\n"
 	"  pop {lr}\n"
@@ -181,6 +188,10 @@ void genericHandler() {
 	:         /* input */
 	:  "r0"   /* clobbered register */);
 
+/*
+void (*fakefunc)(void) = dummyfunc | 1; // not working
+(*fakefunc)();
+*/
 
 	// Increment the return address on the exception stack frame
 	*(psp+6) += instruction.nbytes;
