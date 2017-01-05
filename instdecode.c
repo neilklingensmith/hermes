@@ -7,7 +7,7 @@
 
 #include "instdecode.h"
 
-void instDecode(struct inst *instruction, uint16_t *location){
+int instDecode(struct inst *instruction, uint16_t *location){
 	uint16_t encoding = *location; // Get the opcode
 	
 	instruction->nbytes = 2;
@@ -25,15 +25,110 @@ void instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_ADDSUBREG) == THUMB_OPCODE_ADDSUBREG){
 		// Add/subtract register
 		instruction->type = THUMB_TYPE_ADDSUBREG;
+		instruction->Rm = (encoding>>6) & 7;
+		instruction->Rn = (encoding>>3) & 7;
+		instruction->Rd = encoding & 7;
+		switch((encoding>>9) & 1)
+		{
+		case 0:
+			strcpy(instruction->mnemonic, "ADD");
+			break;
+		case 1:
+			strcpy(instruction->mnemonic, "SUB");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_ADDSUBIMM) == THUMB_OPCODE_ADDSUBIMM){
 		// Add/subtract immediate
 		instruction->type = THUMB_TYPE_ADDSUBIMM;
+		instruction->imm = (encoding>>6) & 7;
+		instruction->Rn = (encoding>>3) & 7;
+		instruction->Rd = encoding & 7;
+		switch((encoding>>9) & 1)
+		{
+		case 0:
+			strcpy(instruction->mnemonic, "ADD");
+			break;
+		case 1:
+			strcpy(instruction->mnemonic, "SUB");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_DATAPROCREG) == THUMB_OPCODE_DATAPROCREG){
 		// Data processing register
 		instruction->type = THUMB_TYPE_DATAPROCREG;
+		instruction->Rm = (encoding>>3) & 7;
+		instruction->Rd = encoding & 7;
+		switch((encoding>>6) & 0xf)
+		{
+		case 0: // AND
+			strcpy(instruction->mnemonic, "AND");
+			break;
+		case 1: // EOR
+			strcpy(instruction->mnemonic, "EOR");
+			break;
+		case 2: // LSL
+			strcpy(instruction->mnemonic, "LSL");
+			break;
+		case 3: // LSR
+			strcpy(instruction->mnemonic, "LSR");
+			break;
+		case 4: // ASR
+			strcpy(instruction->mnemonic, "ASR");
+			break;
+		case 5: // ADC
+			strcpy(instruction->mnemonic, "ASC");
+			break;
+		case 6: // SBC
+			strcpy(instruction->mnemonic, "SBC");
+			break;
+		case 7: // ROR
+			strcpy(instruction->mnemonic, "ROR");
+			break;
+		case 8: // TST
+			strcpy(instruction->mnemonic, "TST");
+			break;
+		case 9: // RSB
+			strcpy(instruction->mnemonic, "RSB");
+			break;
+		case 10: // CMP
+			strcpy(instruction->mnemonic, "CMP");
+			break;
+		case 11: // CMN
+			strcpy(instruction->mnemonic, "CMN");
+			break;
+		case 12: // ORR
+			strcpy(instruction->mnemonic, "ORR");
+			break;
+		case 13: // MUL
+			strcpy(instruction->mnemonic, "MUL");
+			break;
+		case 14: // BIC
+			strcpy(instruction->mnemonic, "BIC");
+			break;
+		case 15: // MVN
+			strcpy(instruction->mnemonic, "MVN");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_SPECIALDATAPROC) == THUMB_OPCODE_SPECIALDATAPROC){
 		// Special data processing instructions
 		instruction->type = THUMB_TYPE_SPECIALDATAPROC;
+		instruction->Rd = encoding & 7;
+		instruction->Rm = (encoding>>3) & 0xf;
+
+		// Determine instruction variant
+		switch((encoding >> 8) & 3)
+		{
+		case 0: // ADD
+			strcpy(instruction->mnemonic, "ADD");
+			break;
+		case 1: // CMP
+			strcpy(instruction->mnemonic, "CMP");
+			break;
+		case 2: // MOV
+			strcpy(instruction->mnemonic, "MOV");
+			break;
+		default:
+			return -1;
+		}
 	}else if ((encoding & THUMB_MASK_LOADLITERAL) == THUMB_OPCODE_LOADLITERAL){
 		// Load from literal pool
 		instruction->type = THUMB_TYPE_LOADLITERAL;
@@ -72,12 +167,60 @@ void instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_SHIFTIMM) == THUMB_OPCODE_SHIFTIMM){
 		// Shift immediate
 		instruction->type = THUMB_TYPE_SHIFTIMM;
+		instruction->Rd = encoding & 7;
+		instruction->Rm = (encoding>>3) & 7;
+		instruction->imm = (encoding>>6) & 0x1f;
+		
+		// Determine instruction variant
+		switch((encoding >> 11) & 3)
+		{
+		case 0: // MOV/LSL
+			if(instruction->imm == 0){
+				strcpy(instruction->mnemonic, "MOV");
+			} else {
+				strcpy(instruction->mnemonic, "MOV");
+			}
+			break;
+		case 1: // LSR
+			strcpy(instruction->mnemonic, "LSR");
+			break;
+		case 2: // ASR
+			strcpy(instruction->mnemonic, "ASR");
+			break;
+		default:
+			return -1;
+		
+		}
 	}else if ((encoding & THUMB_MASK_ADDSUBCMPIMM) == THUMB_OPCODE_ADDSUBCMPIMM){
 		// Add/subtract/compare immediate
 		instruction->type = THUMB_TYPE_ADDSUBCMPIMM;
+		instruction->Rd = (encoding>>8) & 7;
+		instruction->imm = (encoding>>6) & 0xff;
+		
+		// Determine instruction variant
+		switch((encoding >> 11) & 3)
+		{
+		case 0: // MOV
+			strcpy(instruction->mnemonic, "MOV");
+			break;
+		case 1: // CMP
+			strcpy(instruction->mnemonic, "CMP");
+			break;
+		case 2: // ADD
+			strcpy(instruction->mnemonic, "ADD");
+			break;
+		case 3: // SUB
+			strcpy(instruction->mnemonic, "SUB");
+			break;
+		default:
+			return -1;
+		
+		}
 	}else if ((encoding & THUMB_MASK_LDSTWORDBYTE) == THUMB_OPCODE_LDSTWORDBYTE){
 		// Load/store word/byte immediate offset
 		instruction->type = THUMB_TYPE_LDSTWORDBYTE;
 	}
+	
+	return 0;
 }
 

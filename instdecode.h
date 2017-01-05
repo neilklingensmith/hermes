@@ -90,7 +90,7 @@ struct inst {
 	uint8_t Rm;
 	uint8_t nbytes;
 	uint8_t type;
-	char mnemonic[4];
+	char mnemonic[6];
 };
 
 #endif /* INSTDECODE_H_ */
