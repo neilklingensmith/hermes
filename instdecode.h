@@ -37,7 +37,6 @@
 #define THUMB_MASK_32BINSTB        0xF000 // 4 bit mask
 
 // Opcodes
-
 #define THUMB_OPCODE_SHIFTIMM        0x0000
 #define THUMB_OPCODE_ADDSUBREG       0x1800
 #define THUMB_OPCODE_ADDSUBIMM       0x1A00
@@ -60,12 +59,36 @@
 #define THUMB_OPCODE_32BINSTA        0xF800
 #define THUMB_OPCODE_32BINSTB        0xF000
 
+// Instruction type definitions
+#define THUMB_TYPE_SHIFTIMM        1
+#define THUMB_TYPE_ADDSUBREG       2
+#define THUMB_TYPE_ADDSUBIMM       3
+#define THUMB_TYPE_ADDSUBCMPIMM    4
+#define THUMB_TYPE_DATAPROCREG     5
+#define THUMB_TYPE_SPECIALDATAPROC 6
+#define THUMB_TYPE_BRANCH          7
+#define THUMB_TYPE_LOADLITERAL     8
+#define THUMB_TYPE_LDSTREG         8
+#define THUMB_TYPE_LDSTWORDBYTE    10
+#define THUMB_TYPE_LDSTHALFWORD    11
+#define THUMB_TYPE_LDSTSTACK       12
+#define THUMB_TYPE_ADDSPPC         13
+#define THUMB_TYPE_MISC            14
+#define THUMB_TYPE_LDSTM           15
+#define THUMB_TYPE_BRCOND          16
+#define THUMB_TYPE_UNDEF           17
+#define THUMB_TYPE_SYSCALL         18
+#define THUMB_TYPE_BRUNCOND        19
+#define THUMB_TYPE_32BINSTA        20
+#define THUMB_TYPE_32BINSTB        21
+
 
 struct inst {
 	uint16_t imm;
 	uint8_t Rd;
 	uint8_t Rn;
 	uint8_t Rm;
+	uint8_t nbytes;
 	uint8_t type;
 	char mnemonic[4];
 };
