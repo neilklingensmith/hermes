@@ -16,6 +16,12 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	if((encoding & THUMB_MASK_BRANCH) == THUMB_OPCODE_BRANCH){
 		// Branch instruction
 		instruction->type = THUMB_TYPE_BRANCH;
+		instruction->Rm = (encoding>>3) & 0xf;
+		if(((encoding>>7) & 1) == 1) {
+			instruction->mnemonic = "BLX";
+		else {
+			instruction->mnemonic = "BL";
+		}
 	}else if ((encoding & THUMB_MASK_UNDEF) == THUMB_OPCODE_UNDEF){
 		// Undefined instruction
 		instruction->type = THUMB_TYPE_BRANCH;
@@ -142,21 +148,86 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_LDSTREG) == THUMB_OPCODE_LDSTREG){
 		// Load/store register offset instructions
 		instruction->type = THUMB_TYPE_LDSTREG;
+		instruction->Rm = (encoding>>6) & 7;
+		instruction->Rm = (encoding>>3) & 7;
+		instruction->Rd = encoding & 7;
+		switch((encoding>>9) & 7)
+		{
+		case 0: // STR
+			strcpy(instruction->mnemonic, "STR");
+			break;
+		case 1: // STRH
+			strcpy(instruction->mnemonic, "STRH");
+			break;
+		case 2: // STRB
+			strcpy(instruction->mnemonic, "STRB");
+			break;
+		case 3: // LDRSB
+			strcpy(instruction->mnemonic, "LDRSB");
+			break;
+		case 4: // LDR
+			strcpy(instruction->mnemonic, "LDR");
+			break;
+		case 5: // LDRH
+			strcpy(instruction->mnemonic, "LDRH");
+			break;
+		case 6: // LDRB
+			strcpy(instruction->mnemonic, "LDRB");
+			break;
+		case 7: // LDRSH
+			strcpy(instruction->mnemonic, "LDRSH");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_LDSTHALFWORD) == THUMB_OPCODE_LDSTHALFWORD){
 		// Load/store halfword immediate offset
 		instruction->type = THUMB_TYPE_LDSTHALFWORD;
+		instruction->Rd = encoding & 7;
+		instruction->Rn = (encoding>>3) & 7;
+		instruction->imm = (encoding>>6) & 0x1f;
+		if((encoding>>11)& 1 == 0){
+			strcpy(instruction->mnemonic, "STRH");
+			break;
+		else {
+			strcpy(instruction->mnemonic, "LDRH");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_LDSTSTACK) == THUMB_OPCODE_LDSTSTACK){
 		// Load/store from/to stack
 		instruction->type = THUMB_TYPE_LDSTSTACK;
+		instruction->Rd = (encoding>>8) & 0x7;
+		instruction->imm = encoding & 0xff;
+		if(((encoding>>11) & 1) == 0) {
+			instruction->mnemonic = "STR";
+		else {
+			instruction->mnemonic = "LDR";
+		}
 	}else if ((encoding & THUMB_MASK_ADDSPPC) == THUMB_OPCODE_ADDSPPC){
 		// Add to SP or PC
 		instruction->type = THUMB_TYPE_ADDSPPC;
+		instruction->Rd = (encoding>>8) & 7;
+		instruction->imm = encoding & 0xff;
+		if((encoding>>11)& 1 == 0){
+			strcpy(instruction->mnemonic, "ADR");
+			break;
+		else {
+			strcpy(instruction->mnemonic, "ADD");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_MISC) == THUMB_OPCODE_MISC){
 		// Misc instructions
 		instruction->type = THUMB_TYPE_MISC;
 	}else if ((encoding & THUMB_MASK_LDSTM) == THUMB_OPCODE_LDSTM){
 		// Load/store multiple
 		instruction->type = THUMB_TYPE_LDSTM;
+		instruction->Rn = (encoding>>8) & 7;
+		instruction->imm = encoding & 0xff; // Represents register list
+		if((encoding>>11)& 1 == 0){ // STMIA/STMEA
+			strcpy(instruction->mnemonic, "STMIA");
+			break;
+		else { // LDMIA/LDMFD
+			strcpy(instruction->mnemonic, "LDMIA");
+			break;
+		}
 	}else if ((encoding & THUMB_MASK_BRCOND) == THUMB_OPCODE_BRCOND){
 		// Conditional branch
 		instruction->type = THUMB_TYPE_BRCOND;
@@ -219,6 +290,25 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_LDSTWORDBYTE) == THUMB_OPCODE_LDSTWORDBYTE){
 		// Load/store word/byte immediate offset
 		instruction->type = THUMB_TYPE_LDSTWORDBYTE;
+		instruction->Rd = encoding & 7;
+		instruction->Rn = (encoding>>3) & 7;
+		instruction->imm = (encoding>>6) & 0x1f;
+		
+		switch((encoding>>11) & 3)
+		{
+		case 0b00: // STR
+			strcpy(instruction->mnemonic, "STR");
+			break;
+		case 0b01: // LDR
+			strcpy(instruction->mnemonic, "LDR");
+			break;
+		case 0b10: // STRB
+			strcpy(instruction->mnemonic, "STRB");
+			break;
+		case 0b11: // LDRB
+			strcpy(instruction->mnemonic, "LDRB");
+			break;
+		}
 	}
 	
 	return 0;
