@@ -93,4 +93,9 @@ struct inst {
 	char mnemonic[6];
 };
 
+
+int instDecode(struct inst *instruction, uint16_t *location);
+
+
+
 #endif /* INSTDECODE_H_ */

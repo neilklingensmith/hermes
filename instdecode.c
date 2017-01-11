@@ -8,6 +8,8 @@
 #include "instdecode.h"
 #include <string.h>
 
+
+
 int instDecode(struct inst *instruction, uint16_t *location){
 	uint16_t encoding = *location; // Get the opcode
 	

@@ -8,16 +8,24 @@ char hvStack[HV_STACK_SIZE];
 
 int **guestExceptionTable;
 
-char privexe[32]; // memory to hold code to execute privileged instructions.
+char privexe[64]; // memory to hold code to execute privileged instructions.
 
 void dummyfunc() __attribute__((naked));
 void dummyfunc()
 {
 	__asm volatile (
-	"  ldr r1,=guest_regs\n" // NOTE TO SELF: should probably push all registers onto the stack here before restoring regs from guest_regs.
+	"  push {r1-r12,r14}\n"
+	"  ldr r1,=guest_regs\n"
 	"  ldm r1,{r0-r12,r14}\n"
 	"  nop\n"
 	"  nop\n"
+	"  push {r0}\n"
+	"  ldr r0,=guest_regs+4\n" // Use R0 to point to the guest_regs array
+	"  stm r0,{r1-r12,r14}\n"  // Store guest registers
+	"  sub r0,r0,4\n"
+	"  pop {r1}\n"
+	"  str r1, [r0]\n"
+	"  pop {r1-r12,r14}\n"
 	"  bx lr\n"
 	);
 }
@@ -55,9 +63,6 @@ void hvInit(void *gET) {
 	guestExceptionTable = gET;
 	
 	SHCSR = (1<<18) | (1<<17); // Enable bus and usage faults
-	
-	char *srcptr = &dummyfunc;
-	memcpy(privexe, srcptr-1, 20); // Copy dummyfunc into privexe array
 
 	// Update main stack pointer with HV's top of stack.
 	__asm volatile
@@ -77,7 +82,6 @@ void hvInit(void *gET) {
 	"  msr control,r0\n"
 	);
 
-
 	// return
 	__asm volatile
 	(
@@ -85,6 +89,7 @@ void hvInit(void *gET) {
 	"  bx lr\n"
 	);
 	
+	// NOTE: entering thread mode from any level can be enabled using the configuration and control register in the system control block
 /*
 	// Restore regs
 	__asm volatile
@@ -116,10 +121,15 @@ void hvInit(void *gET) {
  * Reads the value of the IPSR, which indicates what interrupt number caused
  * the current exception..
  */
-uint32_t getIPSR() __attribute__((naked));
+uint32_t getIPSR() ;
 uint32_t getIPSR() {
-	__asm("  mrs r0, IPSR\n"
-	      "  bx lr\n");
+	uint32_t ipsrVal = 0;
+	__asm("  mrs %0, IPSR\n"
+	      	:"=r"(ipsrVal) // output
+	      	:              // input
+	      	:              // clobbered register
+	      	);
+	return ipsrVal;
 }
 
 /*
@@ -133,6 +143,9 @@ int *locateGuestISR(int interruptNum){
 }
 
 uint32_t guest_regs[15];
+
+int exceptionProcessor(void) ;
+
 void genericHandler() __attribute__((naked));
 void genericHandler(){
 	// Save the guest registers into the guest registers array
@@ -143,38 +156,19 @@ void genericHandler(){
 	"  mrs r1,psp\n"          // Point R1 to the PSP (exception stack frame)
 	"  ldr r1,[r1]\n"          // Retrieve guest's R0 from the exception stack frame (store it in R1)
 	"  str r1, [r0]\n"
-	"  push {lr}\n"
 	"  bl exceptionProcessor\n"
-	"  pop {lr}\n"
+	"  ldr r1,=guest_regs\n"  // restore registers and return
+	"  ldm r1,{r0-r12,r14}\n"
 	"  bx lr\n"
 	);
 }
 
-
-void exceptionProcessor() {
-
-	int exceptionNum = getIPSR(); // Read IPSR to get exception number
-	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
-	uint16_t *offendingInstruction; // Address of instruction that caused the exception
-	uint32_t *psp;
-	uint32_t busFaultStatus,usageFaultStatus;
-	uint32_t busFaultAddress;
-	
-	// Get the address of the instruction that caused the exception and the PSP
-	__asm volatile
-	(
-	"  mrs %1,psp\n"
-	"  ldr  %0,[%1,#24]"
-	:"=r"(offendingInstruction), "=r" (psp)  /* output */
-	:                           /* input */
-	:"r0"                       /* clobbered register */
-	);
-	
-	struct inst instruction;
-	// Decode the instruction that caused the problem
-	instDecode(&instruction, offendingInstruction);
-
+void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *instruction)
+{
 	// TODO: put the instruction to execute inside dummyfunc, replacing NOPs
+	char *srcptr = (char*)&dummyfunc;
+	memcpy(privexe, (char*)((uint32_t)srcptr & 0xfffffffe), 64); // Copy dummyfunc into privexe array. NOTE: the (srcptr & 0xfe) is a workaround because gcc always adds 1 to the address of a function pointer because
+	memcpy(privexe+10, (char*)offendingInstruction, instruction->nbytes);
 
 	__asm volatile(
 	"  push {lr}\n"
@@ -187,6 +181,33 @@ void exceptionProcessor() {
 	:         /* output */
 	:         /* input */
 	:  "r0"   /* clobbered register */);
+}
+
+
+
+int exceptionProcessor() {
+
+	int exceptionNum = getIPSR(); // Read IPSR to get exception number
+	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
+	uint16_t *offendingInstruction; // Address of instruction that caused the exception
+	uint32_t *psp;
+	uint32_t busFaultStatus,usageFaultStatus;
+	uint32_t busFaultAddress;
+
+	// Get the address of the instruction that caused the exception and the PSP
+	__asm
+	(
+	"  mrs %1,psp\n"
+	"  ldr  %0,[%1,#24]"
+	:"=r"(offendingInstruction), "=r" (psp)  /* output */
+	:                           /* input */
+	:"r0"                       /* clobbered register */
+	);
+
+
+	struct inst instruction;
+	// Decode the instruction that caused the problem
+	instDecode(&instruction, offendingInstruction);
 
 /*
 void (*fakefunc)(void) = dummyfunc | 1; // not working
@@ -201,12 +222,14 @@ void (*fakefunc)(void) = dummyfunc | 1; // not working
 			break;
 		case 3: // HardFault
 
-			return;
+			return 0;
 		case 4: // MemManage
 			break;
 		case 5: // BusFault
 			busFaultStatus = BFSR;
+			BFSR = 0;
 			busFaultAddress = BFAR;
+			executePrivilegedInstruction(offendingInstruction, &instruction);
 			break;
 		case 6: // UsageFault
 			usageFaultStatus = UFSR;
@@ -229,6 +252,15 @@ void (*fakefunc)(void) = dummyfunc | 1; // not working
 			break;
 	}
 
+	return 0;
+
+}
+
+
+
+/*
+
+#if 0
 	__asm volatile
 	(
 	"  ldr r0,=0\n"
@@ -243,13 +275,12 @@ void (*fakefunc)(void) = dummyfunc | 1; // not working
 	"  str r0,[sp,#0]\n"
 	"  ldr lr, =0xfffffffd\n"  // Overwrite LR, forcing exception return to thread mode
 	"  bx lr\n"
-	:                          /* output */
-	:"r"(guestExceptionVector) /* input */
-	:                          /* clobbered register */
+	:                          // output
+	:"r"(guestExceptionVector) // input
+	:                          // clobbered register
 	);
-
-}
-
+#endif
+*/
 
 extern unsigned long _estack;
 
