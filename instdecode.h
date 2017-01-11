@@ -56,7 +56,7 @@
 #define THUMB_OPCODE_UNDEF           0xDE00
 #define THUMB_OPCODE_SYSCALL         0xE800
 #define THUMB_OPCODE_BRUNCOND        0xF000
-#define THUMB_OPCODE_32BINSTA        0xF800
+#define THUMB_OPCODE_32BINSTA        0xE800
 #define THUMB_OPCODE_32BINSTB        0xF000
 
 // Instruction type definitions
@@ -68,7 +68,7 @@
 #define THUMB_TYPE_SPECIALDATAPROC 6
 #define THUMB_TYPE_BRANCH          7
 #define THUMB_TYPE_LOADLITERAL     8
-#define THUMB_TYPE_LDSTREG         8
+#define THUMB_TYPE_LDSTREG         9
 #define THUMB_TYPE_LDSTWORDBYTE    10
 #define THUMB_TYPE_LDSTHALFWORD    11
 #define THUMB_TYPE_LDSTSTACK       12

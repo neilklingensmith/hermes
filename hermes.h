@@ -24,6 +24,7 @@ struct vm {
 
 
 void hvInit(void*) __attribute__((naked));
+void exceptionProcessor(void) ;
 
 
 // ARM Cortex Specific Regs
@@ -35,8 +36,14 @@ void hvInit(void*) __attribute__((naked));
 #define UFSR (*(uint16_t*)0xe000ed2a)  // Usage Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
 
 #define BFAR (*(uint32_t*)0xe000ed38)  // Bus fault address register (Cortex M7 Peripherals > System Control Block)
-
+#define ABFSR (*(uint32_t*)0xe000efa8) // Aux bus fault status register (Cortex M7 Peripherals > Access Control)
 #define ACTLR (*(uint32_t*)0xe000e008)   // Auxiliary control register (Cortex M7 Peripherals > System Control Block)
+
+#define CCR (*(uint32_t*)0xe000ed14)
+
+
+#define BFSR_IMPRECISEERR_MASK 0x00000004
+#define BFSR_BFARVALID_MASK    0x00000080
 
 
 #endif /* HV_H_ */

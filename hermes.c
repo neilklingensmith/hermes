@@ -64,6 +64,8 @@ void hvInit(void *gET) {
 	
 	SHCSR = (1<<18) | (1<<17); // Enable bus and usage faults
 
+	CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
+
 	// Update main stack pointer with HV's top of stack.
 	__asm volatile
 	(
@@ -144,8 +146,12 @@ int *locateGuestISR(int interruptNum){
 
 uint32_t guest_regs[15];
 
-int exceptionProcessor(void) ;
-
+/*
+ * genericHandler
+ *
+ * ASM-only handler that stores user regs and calls the C exceptionProcessor, which does the real work.
+ *
+ */
 void genericHandler() __attribute__((naked));
 void genericHandler(){
 	// Save the guest registers into the guest registers array
@@ -163,6 +169,13 @@ void genericHandler(){
 	);
 }
 
+/*
+ * executePrivilegedInstruction
+ *
+ * Executes a privileged instruction, pointed to by offendingInstruction.
+ *
+ *
+ */
 void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *instruction)
 {
 	// TODO: put the instruction to execute inside dummyfunc, replacing NOPs
@@ -183,53 +196,100 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
 	:  "r0"   /* clobbered register */);
 }
 
+/*
+ * trackImpreciseBusFault
+ *
+ * Starting at offendingInstruction, traces back one instruction at a time,
+ * searching for instructions that could have caused a bus fault. This routine
+ * assumes that the instruction that caused the imprecise bus fault is a load/
+ * store, which may not be the case.
+ *
+ */
+uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFaultAddress)
+{
+	int i;
+	struct inst instruction;
+	uint32_t effective_address;
+	
+	// Trace back 5 instructions
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		
+		effective_address = -1;
+		
+		// Compute the effective address of the instruction
+		switch(instruction.type){
+		case THUMB_TYPE_LDSTREG:
+			effective_address = guest_regs[instruction.Rn] + guest_regs[instruction.Rm];
+			break;
+		case THUMB_TYPE_LDSTWORDBYTE:
+			effective_address = guest_regs[instruction.Rn] + instruction.imm;
+			break;
+		case THUMB_TYPE_LDSTHALFWORD:
+			effective_address = guest_regs[instruction.Rn] + instruction.imm;
+			break;
+		default:
+			break;
+		}
+		if(effective_address == busFaultAddress){
+			return offendingInstruction - i;
+		}
+	}
+	
+	return (uint16_t*)-1;
+}
 
-
-int exceptionProcessor() {
+void exceptionProcessor() {
 
 	int exceptionNum = getIPSR(); // Read IPSR to get exception number
 	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
-	uint16_t *offendingInstruction; // Address of instruction that caused the exception
+	uint16_t *offendingInstruction, *guestPC; // Address of instruction that caused the exception
 	uint32_t *psp;
-	uint32_t busFaultStatus,usageFaultStatus;
+	uint32_t busFaultStatus,auxBusFaultStatus,usageFaultStatus;
 	uint32_t busFaultAddress;
+	struct inst instruction;
+
 
 	// Get the address of the instruction that caused the exception and the PSP
 	__asm
 	(
 	"  mrs %1,psp\n"
 	"  ldr  %0,[%1,#24]"
-	:"=r"(offendingInstruction), "=r" (psp)  /* output */
+	:"=r"(guestPC), "=r" (psp)  /* output */
 	:                           /* input */
 	:"r0"                       /* clobbered register */
 	);
-
-
-	struct inst instruction;
-	// Decode the instruction that caused the problem
-	instDecode(&instruction, offendingInstruction);
-
-/*
-void (*fakefunc)(void) = dummyfunc | 1; // not working
-(*fakefunc)();
-*/
-
-	// Increment the return address on the exception stack frame
-	*(psp+6) += instruction.nbytes;
 
 	switch(exceptionNum){
 		case 2: // NMI
 			break;
 		case 3: // HardFault
 
-			return 0;
+			return;
 		case 4: // MemManage
 			break;
 		case 5: // BusFault
 			busFaultStatus = BFSR;
-			BFSR = 0;
+			auxBusFaultStatus = ABFSR;
 			busFaultAddress = BFAR;
-			executePrivilegedInstruction(offendingInstruction, &instruction);
+			
+			if(((busFaultStatus & BFSR_IMPRECISEERR_MASK) != 0) /*&& ((busFaultStatus & BFSR_BFARVALID_MASK) != 0)*/){ // Imprecise bus fault?
+				offendingInstruction = trackImpreciseBusFault(guestPC, busFaultAddress);
+			} else {
+				offendingInstruction = guestPC;
+				
+				// On a precise exception, we will increment the guest's PC past the offending instruction and move on.
+				
+				// Decode the instruction that caused the problem
+				instDecode(&instruction, offendingInstruction);
+
+				// Increment the return address on the exception stack frame
+				*(psp+6) += instruction.nbytes;
+			}
+ 			executePrivilegedInstruction(offendingInstruction, &instruction);
+			
+			// Clear the BFSR
+			BFSR = 0xff;
 			break;
 		case 6: // UsageFault
 			usageFaultStatus = UFSR;
@@ -252,7 +312,7 @@ void (*fakefunc)(void) = dummyfunc | 1; // not working
 			break;
 	}
 
-	return 0;
+	return;
 
 }
 

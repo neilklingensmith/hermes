@@ -14,6 +14,9 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	uint16_t encoding = *location; // Get the opcode
 	
 	instruction->nbytes = 2;
+	instruction->Rd = -1;
+	instruction->Rm = -1;
+	instruction->Rn = -1;
 	
 	// Decode the instruction type. Start with the longest opcode masks.
 	if((encoding & THUMB_MASK_BRANCH) == THUMB_OPCODE_BRANCH){
@@ -230,6 +233,7 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		instruction->type = THUMB_TYPE_BRCOND;
 	}else if ((encoding & THUMB_MASK_32BINSTB) == THUMB_OPCODE_32BINSTB){
 		// 32-bit instructions
+		// TODO: Decode 32-bit instructions here
 		instruction->type = THUMB_TYPE_32BINSTB;
 		instruction->nbytes = 4;
 	}else if ((encoding & THUMB_MASK_SHIFTIMM) == THUMB_OPCODE_SHIFTIMM){
