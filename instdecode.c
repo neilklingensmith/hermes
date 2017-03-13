@@ -149,8 +149,13 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		instruction->type = THUMB_TYPE_BRUNCOND;
 	}else if ((encoding & THUMB_MASK_32BINSTA) == THUMB_OPCODE_32BINSTA){
 		// 32-bit instructions
-		instruction->type = THUMB_TYPE_32BINSTA;
 		instruction->nbytes = 4;
+		uint32_t encoding32 = *((uint32_t*)location);
+		if((encoding32 & THUMB_MASK32_LDSTDOUBLE) == THUMB_OPCODE32_LDSTDOUBLE) {
+			instruction->type = THUMB_TYPE_LDSTDOUBLE;
+		} else if ((encoding32 & THUMB_MASK32_LDSTM) == THUMB_OPCODE32_LDSTM) {
+			instruction->type = THUMB_TYPE_LDSTM32;
+		}
 	}else if ((encoding & THUMB_MASK_LDSTREG) == THUMB_OPCODE_LDSTREG){
 		// Load/store register offset instructions
 		instruction->type = THUMB_TYPE_LDSTREG;
@@ -234,11 +239,42 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_32BINSTB) == THUMB_OPCODE_32BINSTB){
 		// 32-bit instructions
 		// TODO: Decode 32-bit instructions here
-		instruction->type = THUMB_TYPE_32BINSTB;
+		uint32_t encoding32 = (((uint32_t)*location)<<16) | *(location+1);
 		instruction->nbytes = 4;
+		
+		if((encoding32 & THUMB_MASK32_LDSTSINGLE) == THUMB_OPCODE32_LDSTSINGLE){
+			instruction->type = THUMB_TYPE_LDSTSINGLE;
+			instruction->Rt = (encoding32 >> 12) & 0xf;
+			instruction->Rn = (encoding32 >> 16) & 0xf;
+			if((instruction->Rn == 15) || (((encoding32 >> 23) & 1) == 1)){ // 12 bit immediate
+				if(encoding32>>24 & 1){ // Sign extend?
+					instruction->imm = (encoding32 & 0xfff) | ((encoding32 & 0x800) ? 0xfffff000 : 0); // Sign extend immediate
+				} else {
+					instruction->imm = (encoding32 & 0xfff); // zero extend immediate if S bit clear
+				}
+			} else { // 8 bit immediate
+				if(encoding32>>24 & 1){ // Sign extend?
+					instruction->imm = (encoding32 & 0xff) | ((encoding32 & 0x80) ? 0xffffff00 : 0); // Sign extend immediate
+				} else {
+					instruction->imm = (encoding32 & 0xff); // zero extend immediate if S bit clear
+				}
+			}
+		} else if((encoding32 & THUMB_MASK32_LDSTDOUBLE) == THUMB_OPCODE32_LDSTDOUBLE){
+			instruction->type = THUMB_TYPE_LDSTDOUBLE;
+			instruction->Rt = (encoding32 >> 12) & 0xf;
+			instruction->Rn = (encoding32 >> 16) & 0xf;
+			if(((encoding32>>23) & 3) == 0) {
+				instruction->Rd = (encoding32 >> 8) & 0xf;
+			} else {
+				instruction->Rm = encoding32 & 0xf;
+				// LOAD AND STORE EXCLUSIVE BYTE, HALFWORD,DOUBLEWORD, AND TABLE BRANCH NOT IMPLEMENTED!!!
+			}
+			instruction->imm = encoding32 & 0xff;
+		}
+
 	}else if ((encoding & THUMB_MASK_SHIFTIMM) == THUMB_OPCODE_SHIFTIMM){
 		// Shift immediate
-		instruction->type = THUMB_TYPE_SHIFTIMM;
+		instruction->type = THUMB_TYPE_LDSTDOUBLE;
 		instruction->Rd = encoding & 7;
 		instruction->Rm = (encoding>>3) & 7;
 		instruction->imm = (encoding>>6) & 0x1f;

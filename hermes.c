@@ -204,6 +204,16 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
  * assumes that the instruction that caused the imprecise bus fault is a load/
  * store, which may not be the case.
  *
+ * NOTE: there are ways to defeat this, which could cause the hypervisor to
+ * hang. For instance, you could do an load or store to a privileged memory
+ * region pointed to by Rx followed immediately by a load to Rx. If the first
+ * load/store causes an imprecise exception, we won't be able to determine that
+ * it was the offending instruction because by the time the exception handler
+ * gets called, the register that held the effective address will already have
+ * been overwritten. There are probably ways around this, like tracing back
+ * further to see when Rx was last loaded, and then trying to figure out what
+ * address it held, but that seems like a bitch.
+ *
  */
 uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFaultAddress)
 {
@@ -226,6 +236,9 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 			effective_address = guest_regs[instruction.Rn] + instruction.imm;
 			break;
 		case THUMB_TYPE_LDSTHALFWORD:
+			effective_address = guest_regs[instruction.Rn] + instruction.imm;
+			break;
+		case THUMB_TYPE_LDSTSINGLE:
 			effective_address = guest_regs[instruction.Rn] + instruction.imm;
 			break;
 		default:

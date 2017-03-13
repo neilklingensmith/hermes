@@ -26,8 +26,9 @@ struct vm {
 void hvInit(void*) __attribute__((naked));
 void exceptionProcessor(void) ;
 
-
+///////////////////////////////////////////////
 // ARM Cortex Specific Regs
+
 #define SHCSR (*(uint32_t*)0xe000ed24)
 
 #define CFSR (*(uint32_t*)0xe000ed28)  // Configurable Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)

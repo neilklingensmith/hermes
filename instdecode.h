@@ -35,7 +35,12 @@
 #define THUMB_MASK_BRUNCOND        0xF800 // 5 bit mask
 #define THUMB_MASK_32BINSTA        0xF800 // 5 bit mask
 #define THUMB_MASK_32BINSTB        0xF000 // 4 bit mask
-
+#define THUMB_MASK32_DATAPROCIMM   0xF0008000
+#define THUMB_MASK32_DATAPROCNOIMM 0xEE000000
+#define THUMB_MASK32_LDSTSINGLE    0xFE000000
+#define THUMB_MASK32_LDSTDOUBLE    0xFE400000
+#define THUMB_MASK32_LDSTM         0xFE400000
+#define THUMB_MASK32_BRANCH        0xF8008000
 // Opcodes
 #define THUMB_OPCODE_SHIFTIMM        0x0000
 #define THUMB_OPCODE_ADDSUBREG       0x1800
@@ -58,6 +63,14 @@
 #define THUMB_OPCODE_BRUNCOND        0xF000
 #define THUMB_OPCODE_32BINSTA        0xE800
 #define THUMB_OPCODE_32BINSTB        0xF000
+#define THUMB_OPCODE32_DATAPROCIMM   0xF0000000 // A
+#define THUMB_OPCODE32_DATAPROCNOIMM 0xEA000000 // A?
+#define THUMB_OPCODE32_LDSTSINGLE    0xF8000000 // B
+#define THUMB_OPCODE32_LDSTDOUBLE    0xE8400000 // A
+#define THUMB_OPCODE32_LDSTM         0xE8000000 // A
+#define THUMB_OPCODE32_BRANCH        0xF0008000 // B
+
+
 
 // Instruction type definitions
 #define THUMB_TYPE_SHIFTIMM        1
@@ -79,15 +92,16 @@
 #define THUMB_TYPE_UNDEF           17
 #define THUMB_TYPE_SYSCALL         18
 #define THUMB_TYPE_BRUNCOND        19
-#define THUMB_TYPE_32BINSTA        20
-#define THUMB_TYPE_32BINSTB        21
-
+#define THUMB_TYPE_LDSTDOUBLE      20
+#define THUMB_TYPE_LDSTM32         21
+#define THUMB_TYPE_LDSTSINGLE      22
 
 struct inst {
 	uint16_t imm;
 	uint8_t Rd;
 	uint8_t Rn;
 	uint8_t Rm;
+	uint8_t Rt;
 	uint8_t nbytes;
 	uint8_t type;
 	char mnemonic[6];
