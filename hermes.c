@@ -10,6 +10,16 @@ int **guestExceptionTable;
 
 char privexe[64]; // memory to hold code to execute privileged instructions.
 
+
+/*
+ * dummyfunc
+ *
+ * This function is used by executePrivilegedInstruction to restore the guest's
+ * context and execute the privileged instruction. This function is first copied
+ * into RAM, and the NOP instructions are replaced with the privileged
+ * instruction to be executed.
+ *
+ */
 void dummyfunc() __attribute__((naked));
 void dummyfunc()
 {
@@ -149,7 +159,10 @@ uint32_t guest_regs[15];
 /*
  * genericHandler
  *
- * ASM-only handler that stores user regs and calls the C exceptionProcessor, which does the real work.
+ * ASM-only handler that stores user regs and calls the C exceptionProcessor,
+ * which does the real work. Because of quirks in the GNU C compiler, the
+ * assembly code used to store the registers could not be integrated in with
+ * the exceptionProcessor handler.
  *
  */
 void genericHandler() __attribute__((naked));
@@ -221,7 +234,7 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 	struct inst instruction;
 	uint32_t effective_address;
 	
-	// Trace back 5 instructions
+	// Trace back 5 (two-byte) instructions
 	for(i = 0; i < 5 ; i++){
 		instDecode(&instruction, offendingInstruction-i);
 		
@@ -233,11 +246,7 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 			effective_address = guest_regs[instruction.Rn] + guest_regs[instruction.Rm];
 			break;
 		case THUMB_TYPE_LDSTWORDBYTE:
-			effective_address = guest_regs[instruction.Rn] + instruction.imm;
-			break;
 		case THUMB_TYPE_LDSTHALFWORD:
-			effective_address = guest_regs[instruction.Rn] + instruction.imm;
-			break;
 		case THUMB_TYPE_LDSTSINGLE:
 			effective_address = guest_regs[instruction.Rn] + instruction.imm;
 			break;
@@ -252,6 +261,14 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 	return (uint16_t*)-1;
 }
 
+
+/*
+ * exceptionProcessor
+ *
+ * This is the hypervisor's exception handling routine. It calls the guest's
+ * ISR if necessary, or executes a privileged instruction if necessary.
+ *
+ */
 void exceptionProcessor() {
 
 	int exceptionNum = getIPSR(); // Read IPSR to get exception number

@@ -246,6 +246,13 @@ int instDecode(struct inst *instruction, uint16_t *location){
 			instruction->type = THUMB_TYPE_LDSTSINGLE;
 			instruction->Rt = (encoding32 >> 12) & 0xf;
 			instruction->Rn = (encoding32 >> 16) & 0xf;
+			
+			// Indicate load or store instruction.
+			if(encoding32 & (1<<20)){
+				strcpy(instruction->mnemonic, "LDR");
+			} else {
+				strcpy(instruction->mnemonic, "STR");
+			}
 			if((instruction->Rn == 15) || (((encoding32 >> 23) & 1) == 1)){ // 12 bit immediate
 				if(encoding32>>24 & 1){ // Sign extend?
 					instruction->imm = (encoding32 & 0xfff) | ((encoding32 & 0x800) ? 0xfffff000 : 0); // Sign extend immediate
