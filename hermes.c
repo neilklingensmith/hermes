@@ -10,6 +10,8 @@ int **guestExceptionTable;
 
 char privexe[64]; // memory to hold code to execute privileged instructions.
 
+struct vm *guestList, *currGuest;
+struct vm guests[1];
 
 /*
  * dummyfunc
@@ -69,12 +71,19 @@ void hvInit(void *gET) {
 	
 	// Copy register contents from old stack to new stack
 	
+	// Set up a linked list of guests
+	guestList = &guests[0]; // For now, we have only one guest
+	currGuest = &guests[0];
+	
+	currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
+	
 	// Set up guest data structures.
 	guestExceptionTable = gET;
+	currGuest->vectorTable = gET;
 	
-	SHCSR = (1<<18) | (1<<17); // Enable bus and usage faults
+	SHCSR = (1<<18) | (1<<17) | (1<<16); // Enable bus, usage, and memmanage faults
 
-	CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
+	//CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
 
 	// Update main stack pointer with HV's top of stack.
 	__asm volatile
@@ -100,31 +109,6 @@ void hvInit(void *gET) {
 	"  pop {r1-r12,r14}\n"
 	"  bx lr\n"
 	);
-	
-	// NOTE: entering thread mode from any level can be enabled using the configuration and control register in the system control block
-/*
-	// Restore regs
-	__asm volatile
-	(
-	"  mrs r0,psp\n"      // Get PSP in R0
-//	"  ldm r0!,{r1-r12,r14}\n" // Get saved regs off PSP
-	"  add r0,-32\n"      // Build an exception frame on the stack
-	"  msr psp,r0\n"      // Update PSP
-	"  str r0,[r0,#28]\n" // Put dummy xPSR on exception frame
-	"  str %0,[r0,#24]\n" // Put the address of the guest exception vector on the stack frame--this is the return PC
-	"  str lr,[r0,#20]\n" // Put the LR on the guest exception frame. XXX This needs to be changed--modify LR to always return to thread mode.
-	"  str r12,[r0,#16]\n" // Zero-out the saved registers
-	"  str r3,[r0,#12]\n"
-	"  str r2,[r0,#8]\n"
-	"  str r1,[r0,#4]\n"
-	"  str r0,[r0,#0]\n"
-	"  ldr lr, =0xfffffffd\n"  // Overwrite LR, forcing exception return to thread mode
-	"  bx lr\n"
-	:                   // output
-	:"r"(returnAddress) // input
-	:                   // clobbered register
-	);
-*/
 }
 
 /*
@@ -169,15 +153,27 @@ void genericHandler() __attribute__((naked));
 void genericHandler(){
 	// Save the guest registers into the guest registers array
 	__asm volatile (
-	"  ldr r0,=guest_regs+4\n" // Use R0 to point to the guest_regs array
-	"  stm r0,{r1-r12,r14}\n"  // Store guest registers
+	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
+	"  ldr r0,=guest_regs+4\n"   // Use R0 to point to the guest_regs array
+	"  stm r0,{r1-r12}\n"        // Store guest registers
 	"  sub r0,r0,4\n"
-	"  mrs r1,psp\n"          // Point R1 to the PSP (exception stack frame)
-	"  ldr r1,[r1]\n"          // Retrieve guest's R0 from the exception stack frame (store it in R1)
-	"  str r1, [r0]\n"
+	"  mrs r1,psp\n"             // Point R1 to the PSP (exception stack frame)
+	"  ldr r2,[r1]\n"            // Retrieve guest's R0 from the exception stack frame (store it in R2)
+	"  str r2, [r0]\n"           // Put guest's R0 into guest_regs
+	"  ldr r2,[r1,#20]\n"        // Get the guest's LR off the exception stack frame
+	"  str r2,[r0,#56]\n"        // Put the guest's LR into guest_regs
+	"  ldr r0,=currGuest\n"      // Get a pointer to currGuest in r0
+	"  ldr r0,[r0]\n"            // Point R0 to the currently executing guest
+	"  str r14,[r0,#24]\n"       // Store EXC_RETURN in the currGuest struct
 	"  bl exceptionProcessor\n"
-	"  ldr r1,=guest_regs\n"  // restore registers and return
-	"  ldm r1,{r0-r12,r14}\n"
+	"  ldr r4,=guest_regs\n"     // restore registers and return
+	"  mrs r5,psp\n"             // Point R2 to the PSP (exception stack frame)
+	"  ldm r4,{r0-r3}\n"         // Get r0-r3 from guest_regs
+	"  ldr r12,[r4,#48]\n"       // Get R12 from guest_regs
+	"  ldr r14,[r4,#56]\n"       // Get R14 (LR) from guest_regs
+	"  stm r5,{r0-r3,r12,r14}\n" // Put guest reigsters from guest_regs array onto the exception stack frame
+	"  ldm r4,{r0-r12}\n"
+	"  pop {lr}\n"               // Pop the LR, which olds EXC_RETURN, saved on the stack at beginning of genericHandler
 	"  bx lr\n"
 	);
 }
@@ -262,6 +258,19 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 }
 
 
+uint16_t *trackMRS(uint16_t *offendingInstruction){
+	int i;
+	struct inst instruction;
+
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		if((instruction.type == THUMB_TYPE_MRS) || (instruction.type == THUMB_TYPE_MSR)) {
+			return offendingInstruction-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
+
 /*
  * exceptionProcessor
  *
@@ -277,6 +286,7 @@ void exceptionProcessor() {
 	uint32_t *psp;
 	uint32_t busFaultStatus,auxBusFaultStatus,usageFaultStatus;
 	uint32_t busFaultAddress;
+	uint32_t *newStackFrame;
 	struct inst instruction;
 
 
@@ -284,10 +294,11 @@ void exceptionProcessor() {
 	__asm
 	(
 	"  mrs %1,psp\n"
-	"  ldr  %0,[%1,#24]"
-	:"=r"(guestPC), "=r" (psp)  /* output */
+	"  ldr  %0,[%1,#24]\n"
+	"  ldr  %2,[%1,#28]\n"
+	:"=r"(guestPC), "=r" (psp), "=r"(currGuest->PSR)  /* output */
 	:                           /* input */
-	:"r0"                       /* clobbered register */
+	:                           /* clobbered register */
 	);
 
 	switch(exceptionNum){
@@ -297,6 +308,16 @@ void exceptionProcessor() {
 
 			return;
 		case 4: // MemManage
+		
+			currGuest->MSP = psp + 32; // Store the guest's MSP
+
+			__asm volatile(
+			"msr psp,%0\n"
+			:                            /* output */
+			:"r"(currGuest->PSP)         /* input */
+			:                            /* clobbered register */
+			);
+
 			break;
 		case 5: // BusFault
 			busFaultStatus = BFSR;
@@ -316,13 +337,70 @@ void exceptionProcessor() {
 				// Increment the return address on the exception stack frame
 				*(psp+6) += instruction.nbytes;
 			}
- 			executePrivilegedInstruction(offendingInstruction, &instruction);
+			if((int32_t)offendingInstruction != -1) { // HACK ALERT!! Hack to avoid problem of unexplained access to 0xe000ed20
+ 				executePrivilegedInstruction(offendingInstruction, &instruction);
+			}
 			
 			// Clear the BFSR
 			BFSR = 0xff;
 			break;
 		case 6: // UsageFault
 			usageFaultStatus = UFSR;
+			
+			if(usageFaultStatus & 1){ // Check for illegal instruction
+				
+				// Point the guest's PC past the illegal instruction and continue executing.
+				__asm
+				(
+				"  mrs %1,psp\n"
+				"  ldr  %0,[%1,#24]\n"
+				"  add  %0,%0,#2\n"
+				"  str  %0,[%1,#24]\n"
+				:"=r"(guestPC), "=r" (psp)  /* output */
+				:                           /* input */
+				:                           /* clobbered register */
+				);
+
+				offendingInstruction = trackMRS(guestPC-1);
+				instDecode(&instruction, offendingInstruction); // Decode the instruction
+				switch(instruction.imm){ // instDecode places the register number in instruction.imm
+				case MRS_REGISTER_MSP:
+					if(instruction.type == THUMB_TYPE_MRS){
+						guest_regs[instruction.Rd] = (uint32_t)currGuest->MSP;
+					} else if(instruction.type == THUMB_TYPE_MSR){
+						char temp_stack_frame[32];
+						
+						// NOTE: IF THE GUEST THINKS IT'S IN MASTER MODE, SET THE PROCESSOR'S PSP TO POINT TO currGuest->MSP
+						if(GUEST_IN_MASTER_MODE(currGuest)){
+							currGuest->MSP = (uint32_t*)guest_regs[instruction.Rn]; // Set the guest's MSP
+							
+							currGuest->MSP -= 32; // create an interrupt stack frame on the guest's MSP
+							
+							memcpy(temp_stack_frame,psp,32); // Copy old frame to temp buffer in case the stack frames overlap
+							memcpy(currGuest->MSP,temp_stack_frame,32); // Copy the interrupt stack frame from the hardware PSP to the guest's MSP.
+														
+							// Now put the requested new MSP into the hardware PSP, which is the actual stack pointer used by the guest.
+							asm("msr psp,%0"
+							:                     /* output */
+							: "r"(currGuest->MSP) /* input */
+							:                     /* clobbered register */
+							);
+						}
+					}
+					break;
+				case MRS_REGISTER_PSP:
+					if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
+						guest_regs[instruction.Rd] = (uint32_t)currGuest->PSP;
+					} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
+						currGuest->PSP = (uint32_t*)guest_regs[instruction.Rn];
+					}
+					break;
+				case MRS_REGISTER_BASEPRI:
+					break;
+				} // switch(instruction.imm)
+				
+			}
+			UFSR = 0xff; // Clear UFSR
 			break;
 		case 7:	 // Reserved
 		case 8:
@@ -330,6 +408,18 @@ void exceptionProcessor() {
 		case 10:
 			break;
 		case 11: // SVCall
+			
+			newStackFrame = psp - 8;
+			
+			memcpy(newStackFrame,psp,32);
+			*(newStackFrame+6) = (uint32_t)guestExceptionVector;
+			
+			__asm volatile(
+			"msr psp,%0\n"
+			:                            /* output */
+			:"r"(newStackFrame)         /* input */
+			:                            /* clobbered register */
+			);
 			break;
 		case 12: // Reserved for debug
 		case 13: // Reserved

@@ -17,6 +17,7 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	instruction->Rd = -1;
 	instruction->Rm = -1;
 	instruction->Rn = -1;
+	instruction->Rt = -1;
 	
 	// Decode the instruction type. Start with the longest opcode masks.
 	if((encoding & THUMB_MASK_BRANCH) == THUMB_OPCODE_BRANCH){
@@ -276,6 +277,14 @@ int instDecode(struct inst *instruction, uint16_t *location){
 				instruction->Rm = encoding32 & 0xf;
 				// LOAD AND STORE EXCLUSIVE BYTE, HALFWORD,DOUBLEWORD, AND TABLE BRANCH NOT IMPLEMENTED!!!
 			}
+			instruction->imm = encoding32 & 0xff;
+		} else if ((encoding32 & THUMB_MASK32_MRS) == THUMB_OPCODE32_MRS)  {
+			instruction->type = THUMB_TYPE_MRS;
+			instruction->Rd = (encoding32>>8) & 0xf;
+			instruction->imm = encoding32 & 0xff;
+		} else if ((encoding32 & THUMB_MASK32_MSR) == THUMB_OPCODE32_MSR){
+			instruction->type = THUMB_TYPE_MSR;
+			instruction->Rn = (encoding32>>16) & 0xf;
 			instruction->imm = encoding32 & 0xff;
 		}
 

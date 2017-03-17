@@ -41,6 +41,9 @@
 #define THUMB_MASK32_LDSTDOUBLE    0xFE400000
 #define THUMB_MASK32_LDSTM         0xFE400000
 #define THUMB_MASK32_BRANCH        0xF8008000
+#define THUMB_MASK32_MRS           0xFFE0D000
+#define THUMB_MASK32_MSR           0xFFE0D000
+
 // Opcodes
 #define THUMB_OPCODE_SHIFTIMM        0x0000
 #define THUMB_OPCODE_ADDSUBREG       0x1800
@@ -60,7 +63,7 @@
 #define THUMB_OPCODE_BRCOND          0xD000
 #define THUMB_OPCODE_UNDEF           0xDE00
 #define THUMB_OPCODE_SYSCALL         0xE800
-#define THUMB_OPCODE_BRUNCOND        0xF000
+#define THUMB_OPCODE_BRUNCOND        0xE000
 #define THUMB_OPCODE_32BINSTA        0xE800
 #define THUMB_OPCODE_32BINSTB        0xF000
 #define THUMB_OPCODE32_DATAPROCIMM   0xF0000000 // A
@@ -69,7 +72,8 @@
 #define THUMB_OPCODE32_LDSTDOUBLE    0xE8400000 // A
 #define THUMB_OPCODE32_LDSTM         0xE8000000 // A
 #define THUMB_OPCODE32_BRANCH        0xF0008000 // B
-
+#define THUMB_OPCODE32_MRS           0xF3E08000 // B
+#define THUMB_OPCODE32_MSR           0xF3808000 // B
 
 
 // Instruction type definitions
@@ -95,6 +99,13 @@
 #define THUMB_TYPE_LDSTDOUBLE      20
 #define THUMB_TYPE_LDSTM32         21
 #define THUMB_TYPE_LDSTSINGLE      22
+#define THUMB_TYPE_MRS             23
+#define THUMB_TYPE_MSR             24
+
+// Register definitions for the MRS instruction
+#define MRS_REGISTER_MSP           8
+#define MRS_REGISTER_PSP           9
+#define MRS_REGISTER_BASEPRI       17
 
 struct inst {
 	uint16_t imm;
