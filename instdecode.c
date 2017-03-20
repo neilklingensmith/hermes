@@ -6,9 +6,23 @@
  */ 
 
 #include "instdecode.h"
+#include "hermes.h"
 #include <string.h>
 
 
+void *effectiveAddress(struct inst *instruction, struct vm *guest){
+	// Compute the effective address of the instruction
+	switch(instruction->type){
+		case THUMB_TYPE_LDSTREG:
+			return guest->guest_regs[instruction->Rn] + guest->guest_regs[instruction->Rm];
+		case THUMB_TYPE_LDSTWORDBYTE:
+		case THUMB_TYPE_LDSTHALFWORD:
+		case THUMB_TYPE_LDSTSINGLE:
+			return guest->guest_regs[instruction->Rn] + instruction->imm;
+		default:
+			return (void*)-1;
+	}
+}
 
 int instDecode(struct inst *instruction, uint16_t *location){
 	uint16_t encoding = *location; // Get the opcode

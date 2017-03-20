@@ -12,6 +12,9 @@ char privexe[64]; // memory to hold code to execute privileged instructions.
 
 struct vm *guestList, *currGuest;
 struct vm guests[1];
+struct scb SCB[1];
+
+uint32_t guest_regs[15];
 
 /*
  * dummyfunc
@@ -45,15 +48,15 @@ void dummyfunc()
 void hvInit(void *gET) {
 	uint32_t oldMSP = 0;
 	uint32_t returnAddress;
-	
+
 	// Save regs & preserve MSP
 	__asm volatile
 	(
 	"  push {r1-r12,r14}\n"
 	"  mrs %0,msp\n"
 	"  msr psp,%0\n"
-	"  add %0,%0,52\n"
-	"  msr msp,%0\n"
+//	"  add %0,%0,52\n"
+//	"  msr msp,%0\n"
 	:                   /* output */
 	:"r"(oldMSP) /* input */
 	:                   /* clobbered register */
@@ -73,7 +76,17 @@ void hvInit(void *gET) {
 	
 	// Set up a linked list of guests
 	guestList = &guests[0]; // For now, we have only one guest
-	currGuest = &guests[0];
+	currGuest = &guests[0]; // Normally this stuff would be dynamically allocated
+	guests[0].guest_regs = &guest_regs[0];
+	
+	guests[0].SCB = &SCB[0];
+	
+	// Initialize the SCB
+	memset(&SCB[0], 0, sizeof(struct scb));
+	guests[0].SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
+	guests[0].SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
+	guests[0].SCB->CCR = 0x00000200;   // Set CCR to reset value
+	
 	
 	currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
 	
@@ -106,26 +119,9 @@ void hvInit(void *gET) {
 	// return
 	__asm volatile
 	(
-	"  pop {r1-r12,r14}\n"
+//	"  pop {r1-r12,r14}\n"
 	"  bx lr\n"
 	);
-}
-
-/*
- * getIPSR()
- *
- * Reads the value of the IPSR, which indicates what interrupt number caused
- * the current exception..
- */
-uint32_t getIPSR() ;
-uint32_t getIPSR() {
-	uint32_t ipsrVal = 0;
-	__asm("  mrs %0, IPSR\n"
-	      	:"=r"(ipsrVal) // output
-	      	:              // input
-	      	:              // clobbered register
-	      	);
-	return ipsrVal;
 }
 
 /*
@@ -134,11 +130,11 @@ uint32_t getIPSR() {
  * Parses the guest's exception table, and returns the address of the guest's
  * exception handler associated with interruptNum, the exception number.
  */
-int *locateGuestISR(int interruptNum){
-	return (int*)guestExceptionTable[interruptNum]; // stub that returns function pointer to guest exception table.
+uint32_t *locateGuestISR(int interruptNum){
+	return (uint32_t*)((uint32_t*)currGuest->vectorTable)[interruptNum]; // stub that returns function pointer to guest exception table.
+	//return (int*)guestExceptionTable[interruptNum]; // stub that returns function pointer to guest exception table.
 }
 
-uint32_t guest_regs[15];
 
 /*
  * genericHandler
@@ -154,7 +150,12 @@ void genericHandler(){
 	// Save the guest registers into the guest registers array
 	__asm volatile (
 	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
-	"  ldr r0,=guest_regs+4\n"   // Use R0 to point to the guest_regs array
+//	"  ldr r0,=guest_regs+4\n"   // Use R0 to point to the guest_regs array
+	"  ldr r0,=currGuest\n"
+	"  ldr r0,[r0]\n"
+	"  ldr r0,[r0,#32]\n"
+	"  add r0,r0,#4\n"
+	
 	"  stm r0,{r1-r12}\n"        // Store guest registers
 	"  sub r0,r0,4\n"
 	"  mrs r1,psp\n"             // Point R1 to the PSP (exception stack frame)
@@ -166,7 +167,11 @@ void genericHandler(){
 	"  ldr r0,[r0]\n"            // Point R0 to the currently executing guest
 	"  str r14,[r0,#24]\n"       // Store EXC_RETURN in the currGuest struct
 	"  bl exceptionProcessor\n"
-	"  ldr r4,=guest_regs\n"     // restore registers and return
+//	"  ldr r4,=guest_regs\n"     // restore registers and return
+	"  ldr r4,=currGuest\n"
+	"  ldr r4,[r4]\n"
+	"  ldr r4,[r4,#32]\n"
+	
 	"  mrs r5,psp\n"             // Point R2 to the PSP (exception stack frame)
 	"  ldm r4,{r0-r3}\n"         // Get r0-r3 from guest_regs
 	"  ldr r12,[r4,#48]\n"       // Get R12 from guest_regs
@@ -234,21 +239,8 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 	for(i = 0; i < 5 ; i++){
 		instDecode(&instruction, offendingInstruction-i);
 		
-		effective_address = -1;
-		
-		// Compute the effective address of the instruction
-		switch(instruction.type){
-		case THUMB_TYPE_LDSTREG:
-			effective_address = guest_regs[instruction.Rn] + guest_regs[instruction.Rm];
-			break;
-		case THUMB_TYPE_LDSTWORDBYTE:
-		case THUMB_TYPE_LDSTHALFWORD:
-		case THUMB_TYPE_LDSTSINGLE:
-			effective_address = guest_regs[instruction.Rn] + instruction.imm;
-			break;
-		default:
-			break;
-		}
+		effective_address = (uint32_t) effectiveAddress(&instruction, currGuest);
+
 		if(effective_address == busFaultAddress){
 			return offendingInstruction - i;
 		}
@@ -271,6 +263,43 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 	return (uint16_t*)-1;
 }
 
+
+/*
+ * emulateSCBAccess
+ *
+ * Emulate accesses to the SCB made by guest with instruction at location.
+ *
+ */
+int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
+
+	uint32_t *ea = effectiveAddress(instruction, guest);
+
+	if(instruction->mnemonic[0] == 'L'){
+		// Load from SCB
+		switch((uint32_t)ea){
+		case 0xe000ed04: // ICSR
+			// Loads from the ICSR.
+			// Different load instruction types use different register fields to specify
+			// the destination of the load, so check which one we're using and put the
+			// virtual ICSR value into that reg.
+			if(instruction->Rd != 0xff){
+				guest->guest_regs[instruction->Rd] = guest->SCB->ICSR;
+			} else if (instruction->Rt != 0xff) {
+				guest->guest_regs[instruction->Rt] = guest->SCB->ICSR;
+			}
+			return 0;
+		default:
+			// Default action is to blindly execute privileged SCB access
+			break;
+		}
+	} else if (instruction->mnemonic[0] == 'S') {
+		// Store to SCB
+	}
+	
+	executePrivilegedInstruction(location, instruction);
+	return 0;
+}
+
 /*
  * exceptionProcessor
  *
@@ -280,8 +309,8 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
  */
 void exceptionProcessor() {
 
-	int exceptionNum = getIPSR(); // Read IPSR to get exception number
-	void *guestExceptionVector = locateGuestISR(exceptionNum); // Get the address of the guest's exception handler corresponding to the exception number
+	uint32_t exceptionNum;
+	void *guestExceptionVector; // Get the address of the guest's exception handler corresponding to the exception number
 	uint16_t *offendingInstruction, *guestPC; // Address of instruction that caused the exception
 	uint32_t *psp;
 	uint32_t busFaultStatus,auxBusFaultStatus,usageFaultStatus;
@@ -296,10 +325,13 @@ void exceptionProcessor() {
 	"  mrs %1,psp\n"
 	"  ldr  %0,[%1,#24]\n"
 	"  ldr  %2,[%1,#28]\n"
-	:"=r"(guestPC), "=r" (psp), "=r"(currGuest->PSR)  /* output */
+	"  mrs %3,IPSR\n"
+	:"=r"(guestPC), "=r" (psp), "=r"(currGuest->PSR), "=r"(exceptionNum)  /* output */
 	:                           /* input */
 	:                           /* clobbered register */
 	);
+	
+	guestExceptionVector = locateGuestISR(exceptionNum);
 
 	switch(exceptionNum){
 		case 2: // NMI
@@ -326,19 +358,33 @@ void exceptionProcessor() {
 			
 			if(((busFaultStatus & BFSR_IMPRECISEERR_MASK) != 0) /*&& ((busFaultStatus & BFSR_BFARVALID_MASK) != 0)*/){ // Imprecise bus fault?
 				offendingInstruction = trackImpreciseBusFault(guestPC, busFaultAddress);
+				if(offendingInstruction != (uint16_t*)-1){
+					instDecode(&instruction, offendingInstruction);
+				}
 			} else {
 				offendingInstruction = guestPC;
-				
-				// On a precise exception, we will increment the guest's PC past the offending instruction and move on.
-				
 				// Decode the instruction that caused the problem
 				instDecode(&instruction, offendingInstruction);
-
 				// Increment the return address on the exception stack frame
 				*(psp+6) += instruction.nbytes;
 			}
-			if((int32_t)offendingInstruction != -1) { // HACK ALERT!! Hack to avoid problem of unexplained access to 0xe000ed20
- 				executePrivilegedInstruction(offendingInstruction, &instruction);
+
+
+			if((int32_t)offendingInstruction != (uint16_t*)-1) { // HACK ALERT!! Hack to avoid problem of unexplained access to 0xe000ed20
+
+				uint32_t *ea = (uint32_t*)effectiveAddress(&instruction,currGuest);
+				
+				// If this is a load/store to the SCB, then we have special code to emulate SCB accesses.
+				if(((instruction.type == THUMB_TYPE_LDSTREG) ||
+				   (instruction.type == THUMB_TYPE_LDSTWORDBYTE) ||
+				   (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
+				   (instruction.type == THUMB_TYPE_LDSTSINGLE)) &&
+				   ((ea >= 0xe000ed00) && (ea < 0xe000ed40) || (ea == 0xe000e008))){
+					emulateSCBAccess(currGuest, offendingInstruction, &instruction);
+				} else {
+					// If not a load/store to the SCB, then just blindly execute the instr.
+ 					executePrivilegedInstruction(offendingInstruction, &instruction);
+				}
 			}
 			
 			// Clear the BFSR
@@ -396,6 +442,20 @@ void exceptionProcessor() {
 					}
 					break;
 				case MRS_REGISTER_BASEPRI:
+					// Here we're blindly setting the BASEPRI register when requested by the guest. This strategy is probably not good. Probably should be emulated.
+					if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
+						asm("mrs %0,basepri"
+						:                     /* output */
+						: "r"(guest_regs[instruction.Rd]) /* input */
+						:                     /* clobbered register */
+						);
+					} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
+						asm("msr basepri,%0"
+						:                     /* output */
+						: "r"(guest_regs[instruction.Rn]) /* input */
+						:                     /* clobbered register */
+						);
+					}
 					break;
 				} // switch(instruction.imm)
 				

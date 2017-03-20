@@ -10,7 +10,7 @@
 #define INSTDECODE_H_
 
 #include <stdint.h>
-
+#include "hermes.h"
 
 
 // Bitmasks
@@ -120,7 +120,7 @@ struct inst {
 
 
 int instDecode(struct inst *instruction, uint16_t *location);
-
+void *effectiveAddress(struct inst *instruction, struct vm *guest);
 
 
 #endif /* INSTDECODE_H_ */

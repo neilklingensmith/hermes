@@ -16,6 +16,25 @@
 
 #define HV_STACK_SIZE 512
 
+// System control block for ARM Cortex M7 CPU
+struct scb {
+	uint32_t ACTLR;
+	uint32_t CPUID;
+	uint32_t ICSR;
+	uint32_t VTOR;
+	uint32_t AIRCR;
+	uint32_t SCR;
+	uint32_t CCR;
+	uint32_t SHPR1;
+	uint32_t SHPR2;
+	uint32_t SHPR3;
+	uint32_t SHCRS;
+	uint32_t CFSR;
+	uint32_t HFSR;
+	uint32_t MMAR;
+	uint32_t BFAR;
+	uint32_t AFSR;
+};
 
 struct vm {
 	struct vm *next;
@@ -27,6 +46,8 @@ struct vm {
 	uint32_t PSR;
 	uint32_t EXC_RETURN;
 	uint32_t status;
+	uint32_t *guest_regs;
+	struct scb *SCB;
 };
 
 
@@ -58,7 +79,7 @@ void exceptionProcessor(void) ;
 #define ABFSR (*(uint32_t*)0xe000efa8) // Aux bus fault status register (Cortex M7 Peripherals > Access Control)
 #define ACTLR (*(uint32_t*)0xe000e008)   // Auxiliary control register (Cortex M7 Peripherals > System Control Block)
 
-#define CCR (*(uint32_t*)0xe000ed14)
+#define CORTEXM7_CCR (*(uint32_t*)0xe000ed14)
 
 
 #define BFSR_IMPRECISEERR_MASK 0x00000004
