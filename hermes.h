@@ -61,6 +61,7 @@ void exceptionProcessor(void) ;
 
 
 #define STATUS_PROCESSOR_MODE_MASTER 1
+#define STATUS_PROCESSOR_MODE_THREAD 0
 
 
 #define GUEST_IN_MASTER_MODE(a)      (a->status & STATUS_PROCESSOR_MODE_MASTER) // Macro to check if a guest is in master mode

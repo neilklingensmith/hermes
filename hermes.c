@@ -130,8 +130,8 @@ void hvInit(void *gET) {
  * Parses the guest's exception table, and returns the address of the guest's
  * exception handler associated with interruptNum, the exception number.
  */
-uint32_t *locateGuestISR(int interruptNum){
-	return (uint32_t*)((uint32_t*)currGuest->vectorTable)[interruptNum]; // stub that returns function pointer to guest exception table.
+uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
+	return (uint32_t*)((uint32_t*)guest->vectorTable)[interruptNum]; // stub that returns function pointer to guest exception table.
 	//return (int*)guestExceptionTable[interruptNum]; // stub that returns function pointer to guest exception table.
 }
 
@@ -273,6 +273,7 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
 
 	uint32_t *ea = effectiveAddress(instruction, guest);
+	uint32_t icsrVal;
 
 	if(instruction->mnemonic[0] == 'L'){
 		// Load from SCB
@@ -294,6 +295,28 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 		}
 	} else if (instruction->mnemonic[0] == 'S') {
 		// Store to SCB
+	switch((uint32_t)ea){
+		case 0xe000ed04: // ICSR
+		// Different load instruction types use different register fields to specify
+		// the destination of the load, so check which one we're using and put the
+		// virtual ICSR value into that reg.
+		if(instruction->Rd != 0xff){
+			icsrVal = guest->guest_regs[instruction->Rd];
+		} else if (instruction->Rt != 0xff) {
+			icsrVal = guest->guest_regs[instruction->Rt];
+		}
+		if(icsrVal & (1<<28)){ // PendSV Set Bit
+			guest->SCB->ICSR |= (1<<28);
+		}
+		
+		if(icsrVal & (1<<27)){ // PendSV Clear bit
+			guest->SCB->ICSR &= ~(1<<28);
+		}
+		return 0;
+		default:
+		// Default action is to blindly execute privileged SCB access
+		break;
+	}
 	}
 	
 	executePrivilegedInstruction(location, instruction);
@@ -331,7 +354,7 @@ void exceptionProcessor() {
 	:                           /* clobbered register */
 	);
 	
-	guestExceptionVector = locateGuestISR(exceptionNum);
+	guestExceptionVector = locateGuestISR(currGuest,exceptionNum);
 
 	switch(exceptionNum){
 		case 2: // NMI
@@ -339,9 +362,10 @@ void exceptionProcessor() {
 		case 3: // HardFault
 
 			return;
-		case 4: // MemManage
-		
+		case 4: // MemManage: Caused by bx lr instruction or similar trying to put EXEC_RETURN value into the PC
+
 			currGuest->MSP = psp + 32; // Store the guest's MSP
+			currGuest->status = STATUS_PROCESSOR_MODE_THREAD;// Change to thread mode.
 
 			__asm volatile(
 			"msr psp,%0\n"
@@ -469,11 +493,15 @@ void exceptionProcessor() {
 			break;
 		case 11: // SVCall
 			
-			newStackFrame = psp - 8;
+			if(GUEST_IN_MASTER_MODE(currGuest)){
+				newStackFrame = psp - 8;
+			} else {
+				newStackFrame = currGuest->MSP - 8;
+			}
 			
 			memcpy(newStackFrame,psp,32);
-			*(newStackFrame+6) = (uint32_t)guestExceptionVector;
-			
+			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum); // find the guest's SVCall exception handler
+			currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Change to master mode since we're jumping to an exception processor
 			__asm volatile(
 			"msr psp,%0\n"
 			:                            /* output */
@@ -491,6 +519,27 @@ void exceptionProcessor() {
 		default: // Higher-order interrupt numbers are chip-specific.
 			break;
 	}
+
+	// Check to see if we have a PendSV exception pending on this guest.
+	if(currGuest->SCB->ICSR & (1<<28)) {
+		if(GUEST_IN_MASTER_MODE(currGuest)){
+			newStackFrame = psp - 8;
+		} else {
+			newStackFrame = currGuest->MSP - 8;
+			currGuest->PSP = psp + 8;
+		}
+			
+		memcpy(newStackFrame,psp,32);
+		*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,14); // Find the guest's PendSV handler
+		currGuest->status |= STATUS_PROCESSOR_MODE_MASTER; // Change to master mode since we're jumping to an exception processor
+		__asm volatile(
+		"msr psp,%0\n"
+		:                            /* output */
+		:"r"(newStackFrame)         /* input */
+		:                            /* clobbered register */
+		);
+	}
+
 
 	return;
 
