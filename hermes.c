@@ -365,14 +365,29 @@ void exceptionProcessor() {
 		case 4: // MemManage: Caused by bx lr instruction or similar trying to put EXEC_RETURN value into the PC
 
 			currGuest->MSP = psp + 32; // Store the guest's MSP
-			currGuest->status = STATUS_PROCESSOR_MODE_THREAD;// Change to thread mode.
+//			SET_PROCESSOR_EXCEPTION(currGuest,0);
 
-			__asm volatile(
-			"msr psp,%0\n"
-			:                            /* output */
-			:"r"(currGuest->PSP)         /* input */
-			:                            /* clobbered register */
-			);
+			if((*(psp+5) & 0xe) != 0) {
+				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
+				SET_PROCESSOR_MODE_THREAD(currGuest);
+			
+				__asm volatile(
+				"msr psp,%0\n"
+				:                            /* output */
+				:"r"(currGuest->PSP)         /* input */
+				:                            /* clobbered register */
+				);
+			} else {
+				// Otherwise we're returning to master mode
+				SET_PROCESSOR_MODE_MASTER(currGuest);
+				
+				__asm volatile(
+				"msr psp,%0\n"
+				:                            /* output */
+				:"r"(currGuest->MSP)         /* input */
+				:                            /* clobbered register */
+				);
+			}
 
 			break;
 		case 5: // BusFault
@@ -501,7 +516,7 @@ void exceptionProcessor() {
 			
 			memcpy(newStackFrame,psp,32);
 			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum); // find the guest's SVCall exception handler
-			currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Change to master mode since we're jumping to an exception processor
+			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 			__asm volatile(
 			"msr psp,%0\n"
 			:                            /* output */
@@ -521,7 +536,13 @@ void exceptionProcessor() {
 	}
 
 	// Check to see if we have a PendSV exception pending on this guest.
-	if(currGuest->SCB->ICSR & (1<<28)) {
+	// Make sure we are not already executing a PendSV exception handler.
+	if((currGuest->SCB->ICSR & (1<<28))/* && GET_PROCESSOR_EXCEPTION(currGuest) == 0*/) {
+//		SET_PROCESSOR_EXCEPTION(currGuest,14);
+		
+		// Clear the PendSVSet bit in ICSR
+		currGuest->SCB->ICSR &= ~(1<<28);
+		
 		if(GUEST_IN_MASTER_MODE(currGuest)){
 			newStackFrame = psp - 8;
 		} else {
@@ -531,7 +552,7 @@ void exceptionProcessor() {
 			
 		memcpy(newStackFrame,psp,32);
 		*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,14); // Find the guest's PendSV handler
-		currGuest->status |= STATUS_PROCESSOR_MODE_MASTER; // Change to master mode since we're jumping to an exception processor
+		SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 		__asm volatile(
 		"msr psp,%0\n"
 		:                            /* output */

@@ -56,13 +56,29 @@ void hvInit(void*) __attribute__((naked));
 void exceptionProcessor(void) ;
 
 
+/*
+ * VM Status - 32-bit Number 
+ *
+ *  31              24                                                                             0
+ *  ----------------------------------------------------------------------------------------------------
+ *  |    Exception   |                                                                          | MODE |
+ *  ----------------------------------------------------------------------------------------------------
+ *
+ *  Exception - 8 Bits, currently active exception handler. 0 Indicates none
+ *  Mode - 1 bit, Master (1) or Thread (0)
+ *
+ */
+
 #define STATUS_MASK_MODE             1
-
-
 
 #define STATUS_PROCESSOR_MODE_MASTER 1
 #define STATUS_PROCESSOR_MODE_THREAD 0
 
+#define SET_PROCESSOR_MODE_MASTER(g) (g->status |= STATUS_PROCESSOR_MODE_MASTER)   // Set guest g's execution mode to master
+#define SET_PROCESSOR_MODE_THREAD(g) (g->status &= ~STATUS_PROCESSOR_MODE_MASTER)  // Set guest g's execution mode to thread
+
+#define SET_PROCESSOR_EXCEPTION(g,e) (g->status = (g->status & 0x00ffffff) | (e<<24))  // Set guest g's currently executing exception to e
+#define GET_PROCESSOR_EXCEPTION(g) ((g->status >> 24) & 0xff)
 
 #define GUEST_IN_MASTER_MODE(a)      (a->status & STATUS_PROCESSOR_MODE_MASTER) // Macro to check if a guest is in master mode
 
