@@ -167,12 +167,11 @@ void genericHandler(){
 	"  ldr r0,[r0]\n"            // Point R0 to the currently executing guest
 	"  str r14,[r0,#24]\n"       // Store EXC_RETURN in the currGuest struct
 	"  bl exceptionProcessor\n"
-//	"  ldr r4,=guest_regs\n"     // restore registers and return
-	"  ldr r4,=currGuest\n"
+	"  ldr r4,=currGuest\n"      // R4 <- currGuest->guest_regs
 	"  ldr r4,[r4]\n"
 	"  ldr r4,[r4,#32]\n"
 	
-	"  mrs r5,psp\n"             // Point R2 to the PSP (exception stack frame)
+	"  mrs r5,psp\n"             // Point R5 to the PSP (exception stack frame)
 	"  ldm r4,{r0-r3}\n"         // Get r0-r3 from guest_regs
 	"  ldr r12,[r4,#48]\n"       // Get R12 from guest_regs
 	"  ldr r14,[r4,#56]\n"       // Get R14 (LR) from guest_regs
@@ -249,6 +248,35 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
 	return (uint16_t*)-1;
 }
 
+/*
+ * findLastPrivilegedMemoryAccess
+ *
+ * Beginning at startingAddress, traces backwards through program memory to
+ * find the last load/store instruction that accesses a privilged memory
+ * address. Returns the address of the instruction if it finds one, -1
+ * otherwise.
+ *
+ * This function is used as a backup in case trackImpreciseBusFault cannot
+ * locate the instruction that caused a bus fault.
+ *
+ */
+uint16_t *findLastPrivilegedMemoryAccess(uint16_t *startingAddress)
+{
+	int i;
+	struct inst instruction;
+	uint32_t effective_address;
+
+	for(i = 0; i < 10; i++){
+		instDecode(&instruction, startingAddress-i);
+		
+		effective_address = (uint32_t) effectiveAddress(&instruction, currGuest);
+
+		if((effective_address >= 0xe0000000) && (effective_address <= 0xE00FFFFF)){
+			return startingAddress-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
 
 uint16_t *trackMRS(uint16_t *offendingInstruction){
 	int i;
@@ -336,10 +364,11 @@ void exceptionProcessor() {
 	void *guestExceptionVector; // Get the address of the guest's exception handler corresponding to the exception number
 	uint16_t *offendingInstruction, *guestPC; // Address of instruction that caused the exception
 	uint32_t *psp;
-	uint32_t busFaultStatus,auxBusFaultStatus,usageFaultStatus;
-	uint32_t busFaultAddress;
-	uint32_t *newStackFrame;
-	struct inst instruction;
+	uint32_t busFaultStatus,auxBusFaultStatus,usageFaultStatus; // Fault status regs.
+	uint32_t busFaultAddress; // Address in program mem that caused bus fault
+	uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
+	struct inst instruction; // Instruction that caused the exception for bus faults and usage faults (emulated privileged instrs)
+	uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
 
 
 	// Get the address of the instruction that caused the exception and the PSP
@@ -353,21 +382,34 @@ void exceptionProcessor() {
 	:                           /* input */
 	:                           /* clobbered register */
 	);
-	
+
+	// Check if we got to hard fault because of escalation of a bus fault or a usage fault
+	// This can be caused by a usage fault or hard fault when PRIMASK = 1
+	if(exceptionNum == ARM_CORTEX_M7_HARDFAULT_ISR_NUM){
+		usageFaultStatus = UFSR;
+		busFaultStatus = BFSR;
+		if(usageFaultStatus != 0){
+			exceptionNum = ARM_CORTEX_M7_USAGEFAULT_ISR_NUM;
+		} else if ((busFaultStatus & 0x39) != 0){
+			exceptionNum = ARM_CORTEX_M7_BUSFAULT_ISR_NUM;
+		} else if ((MMFSR & 0x7f) != 0){
+			exceptionNum = ARM_CORTEX_M7_MEMMANAGEFAULT_ISR_NUM;
+		}
+	}
+
+
 	guestExceptionVector = locateGuestISR(currGuest,exceptionNum);
 
 	switch(exceptionNum){
 		case 2: // NMI
 			break;
 		case 3: // HardFault
-
 			return;
 		case 4: // MemManage: Caused by bx lr instruction or similar trying to put EXEC_RETURN value into the PC
 
-			currGuest->MSP = psp + 32; // Store the guest's MSP
-//			SET_PROCESSOR_EXCEPTION(currGuest,0);
+			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
 
-			if((*(psp+5) & 0xe) != 0) {
+			if((*(psp+6) & 0xe) != 0) {
 				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
 				SET_PROCESSOR_MODE_THREAD(currGuest);
 			
@@ -388,6 +430,10 @@ void exceptionProcessor() {
 				:                            /* clobbered register */
 				);
 			}
+			
+			__asm volatile (
+					"mov r0,#0\n" // Enable All exceptions by setting primask to 0
+					"msr primask,r0");
 
 			break;
 		case 5: // BusFault
@@ -395,8 +441,17 @@ void exceptionProcessor() {
 			auxBusFaultStatus = ABFSR;
 			busFaultAddress = BFAR;
 			
-			if(((busFaultStatus & BFSR_IMPRECISEERR_MASK) != 0) /*&& ((busFaultStatus & BFSR_BFARVALID_MASK) != 0)*/){ // Imprecise bus fault?
+			if((busFaultStatus & BFSR_IMPRECISEERR_MASK) != 0){ // Imprecise bus fault?
 				offendingInstruction = trackImpreciseBusFault(guestPC, busFaultAddress);
+				
+				// If trackImpreciseBusFault is unable to locate the instuction
+				// that caused the bus fault, then use
+				// findLastPrivilegedMemoryAccess to search backwards in program
+				// memory to locate the last instruction that accessed a
+				// privileged memory region. This is the most likely culprit.
+				if(offendingInstruction == (uint16_t*)-1){
+					offendingInstruction = findLastPrivilegedMemoryAccess(guestPC);
+				}
 				if(offendingInstruction != (uint16_t*)-1){
 					instDecode(&instruction, offendingInstruction);
 				}
@@ -530,34 +585,80 @@ void exceptionProcessor() {
 		case 14: // PendSV
 			break;
 		case 15: // SysTick
-			break;
+			if(GUEST_IN_MASTER_MODE(currGuest)){
+				newStackFrame = psp - 8;
+				newLR = 0xFFFFFFF1;
+			} else {
+				newStackFrame = currGuest->MSP - 8;
+				//memcpy(currGuest->MSP-8,psp,32); // Copy the exception stack frame produced by the CPU from the guest's thread stack to the guest's master stack
+				currGuest->PSP = psp;
+				newLR = 0xFFFFFFFD;
+			}
+						
+			newStackFrame[0] = guest_regs[0];
+			newStackFrame[1] = guest_regs[1];
+			newStackFrame[2] = guest_regs[2];
+			newStackFrame[3] = guest_regs[3];
+			newStackFrame[4] = guest_regs[12];
+			newStackFrame[5] = newLR;
+			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM); // Find the guest's PendSV handler
+			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+
+			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
+
+			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
+			__asm volatile(
+			"msr psp,%0\n"
+			"mov r0,#1\n" // Mask All exceptions by setting primask to 1
+			"msr primask,r0"
+			:                           /* output */
+			:"r"(newStackFrame)         /* input */
+			:"r0"                       /* clobbered register */
+			);
+			return;
 		default: // Higher-order interrupt numbers are chip-specific.
 			break;
 	}
 
 	// Check to see if we have a PendSV exception pending on this guest.
 	// Make sure we are not already executing a PendSV exception handler.
-	if((currGuest->SCB->ICSR & (1<<28))/* && GET_PROCESSOR_EXCEPTION(currGuest) == 0*/) {
-//		SET_PROCESSOR_EXCEPTION(currGuest,14);
+	if((currGuest->SCB->ICSR & (1<<28)) && !GUEST_IN_MASTER_MODE(currGuest)) {
 		
 		// Clear the PendSVSet bit in ICSR
 		currGuest->SCB->ICSR &= ~(1<<28);
 		
 		if(GUEST_IN_MASTER_MODE(currGuest)){
 			newStackFrame = psp - 8;
+			newLR = 0xFFFFFFF1;
 		} else {
 			newStackFrame = currGuest->MSP - 8;
-			currGuest->PSP = psp + 8;
+			currGuest->PSP = psp;
+			newLR = 0xFFFFFFFD;
 		}
 			
-		memcpy(newStackFrame,psp,32);
-		*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,14); // Find the guest's PendSV handler
+		newStackFrame[0] = guest_regs[0];
+		newStackFrame[1] = guest_regs[1];
+		newStackFrame[2] = guest_regs[2];
+		newStackFrame[3] = guest_regs[3];
+		newStackFrame[4] = guest_regs[12];
+		newStackFrame[5] = guest_regs[14];
+		newStackFrame[6] = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_PENDSV_ISR_NUM); // Find the guest's PendSV handler
+		newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+		
+		guest_regs[14] = newLR;
+		
+		// Clear Bit 9 of the PSR on the stack to indicate stack alignment
+		// See ARM Cortex M7 Generic User Guide Section 4.3.7. Configuration and Control Register
+		//*(newStackFrame+7) &= ~(1<<9);
+
 		SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 		__asm volatile(
 		"msr psp,%0\n"
-		:                            /* output */
+		"mov r0,#1\n" // Mask All exceptions by setting primask to 1
+		"msr primask,r0"
+		:                           /* output */
 		:"r"(newStackFrame)         /* input */
-		:                            /* clobbered register */
+		:"r0"                       /* clobbered register */
 		);
 	}
 
@@ -565,32 +666,6 @@ void exceptionProcessor() {
 	return;
 
 }
-
-
-
-/*
-
-#if 0
-	__asm volatile
-	(
-	"  ldr r0,=0\n"
-	"  add sp,-32\n"      // Build an exception frame on the stack
-	"  str r0,[sp,#28]\n" // Put dummy xPSR on exception frame
-	"  str %0,[sp,#24]\n" // Put the address of the guest exception vector on the stack frame--this is the return PC
-	"  str lr,[sp,#20]\n" // Put the LR on the guest exception frame. XXX This needs to be changed--modify LR to always return to thread mode.
-	"  str r0,[sp,#16]\n" // Zero-out the saved registers
-	"  str r0,[sp,#12]\n"
-	"  str r0,[sp,#8]\n"
-	"  str r0,[sp,#4]\n"
-	"  str r0,[sp,#0]\n"
-	"  ldr lr, =0xfffffffd\n"  // Overwrite LR, forcing exception return to thread mode
-	"  bx lr\n"
-	:                          // output
-	:"r"(guestExceptionVector) // input
-	:                          // clobbered register
-	);
-#endif
-*/
 
 extern unsigned long _estack;
 

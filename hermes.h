@@ -103,4 +103,16 @@ void exceptionProcessor(void) ;
 #define BFSR_BFARVALID_MASK    0x00000080
 
 
+
+///////////////////////////////////////////////
+// ARM Cortex ISR numbers
+
+#define ARM_CORTEX_M7_HARDFAULT_ISR_NUM       3
+#define ARM_CORTEX_M7_MEMMANAGEFAULT_ISR_NUM  4
+#define ARM_CORTEX_M7_BUSFAULT_ISR_NUM        5
+#define ARM_CORTEX_M7_USAGEFAULT_ISR_NUM      6
+#define ARM_CORTEX_M7_PENDSV_ISR_NUM          14
+#define ARM_CORTEX_M7_SYSTICK_ISR_NUM         15
+
+
 #endif /* HV_H_ */
