@@ -370,7 +370,9 @@ void exceptionProcessor() {
 	struct inst instruction; // Instruction that caused the exception for bus faults and usage faults (emulated privileged instrs)
 	uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
 
+	static int count = 0;
 
+	count++;
 	// Get the address of the instruction that caused the exception and the PSP
 	__asm
 	(
@@ -553,6 +555,8 @@ void exceptionProcessor() {
 					break;
 				} // switch(instruction.imm)
 				
+			} else {
+				while(1);
 			}
 			UFSR = 0xff; // Clear UFSR
 			break;
@@ -662,6 +666,18 @@ void exceptionProcessor() {
 		);
 	}
 
+	// DEBUG ONLY!!!
+	uint32_t *stackframe;
+	
+	
+	__asm volatile (
+	"mrs %0, psp\n" : "=r"(stackframe)::);
+	
+	if(stackframe[6] > 0x4fffff){
+		while(1);
+	}
+
+	// END DEBUG ONLY
 
 	return;
 
