@@ -149,9 +149,9 @@ void genericHandler() __attribute__((naked));
 void genericHandler(){
 	// Save the guest registers into the guest registers array
 	__asm volatile (
+//	"  cpsie i\n"                // Disable interrupts
 	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
-//	"  ldr r0,=guest_regs+4\n"   // Use R0 to point to the guest_regs array
-	"  ldr r0,=currGuest\n"
+	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r0,[r0]\n"
 	"  ldr r0,[r0,#32]\n"
 	"  add r0,r0,#4\n"
@@ -434,8 +434,10 @@ void exceptionProcessor() {
 			}
 			
 			__asm volatile (
-					"mov r0,#0\n" // Enable All exceptions by setting primask to 0
-					"msr primask,r0");
+					"cpsie i\n" // Enable All exceptions by setting primask to 0
+					//"mov r0,#0\n" // Enable All exceptions by setting primask to 0
+					//"msr primask,r0"
+					);
 
 			break;
 		case 5: // BusFault
@@ -556,6 +558,14 @@ void exceptionProcessor() {
 				} // switch(instruction.imm)
 				
 			} else {
+				// Search RAM for 0x80000060
+				int *ptr =  0x20400000;
+				while(ptr < (0x20400000 + 0x60000)){
+					if(*ptr == 0x80000060){
+						while(1);
+					}
+					ptr++;
+				}
 				while(1);
 			}
 			UFSR = 0xff; // Clear UFSR
@@ -613,8 +623,9 @@ void exceptionProcessor() {
 			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 			__asm volatile(
 			"msr psp,%0\n"
-			"mov r0,#1\n" // Mask All exceptions by setting primask to 1
-			"msr primask,r0"
+			//"mov r0,#1\n" // Mask All exceptions by setting primask to 1
+			//"msr primask,r0\n"
+			"cpsid i\n" // Mask All exceptions by setting primask to 1
 			:                           /* output */
 			:"r"(newStackFrame)         /* input */
 			:"r0"                       /* clobbered register */
@@ -648,7 +659,7 @@ void exceptionProcessor() {
 		newStackFrame[5] = guest_regs[14];
 		newStackFrame[6] = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_PENDSV_ISR_NUM); // Find the guest's PendSV handler
 		newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
-		
+
 		guest_regs[14] = newLR;
 		
 		// Clear Bit 9 of the PSR on the stack to indicate stack alignment
@@ -658,8 +669,7 @@ void exceptionProcessor() {
 		SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 		__asm volatile(
 		"msr psp,%0\n"
-		"mov r0,#1\n" // Mask All exceptions by setting primask to 1
-		"msr primask,r0"
+		"cpsid i\n" // Mask All exceptions by setting primask to 1
 		:                           /* output */
 		:"r"(newStackFrame)         /* input */
 		:"r0"                       /* clobbered register */
