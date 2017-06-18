@@ -18,7 +18,7 @@ void *effectiveAddress(struct inst *instruction, struct vm *guest){
 		case THUMB_TYPE_LDSTWORDBYTE:
 		case THUMB_TYPE_LDSTHALFWORD:
 		case THUMB_TYPE_LDSTSINGLE:
-			return guest->guest_regs[instruction->Rn] + instruction->imm;
+			return guest->guest_regs[instruction->Rn] + (instruction->imm<<2);
 		default:
 			return (void*)-1;
 	}
@@ -238,6 +238,25 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_MISC) == THUMB_OPCODE_MISC){
 		// Misc instructions
 		instruction->type = THUMB_TYPE_MISC;
+		
+		// CPS Instructions, Section 4.6.31 of ARM Arch Ref Man
+		// Instruction Encoding:
+		// | 1 0 1 1 | 0 1 1 0 | 0 1 1 Im| 0 A I F |
+		//
+		if((encoding & THUMB_MASK_MISC_CPS) == THUMB_OPCODE_MISC_CPS){
+			instruction->type = THUMB_TYPE_MISC_CPS;
+			instruction->imm = encoding & 0x1f;
+			
+			if((instruction->imm & 0x10) == 0){ // Check the immediate bit (enable)
+				strcpy(instruction->mnemonic, "CPSID ");
+			} else {
+				strcpy(instruction->mnemonic, "CPSIE ");
+			}
+			
+			if((encoding & 7) == 2){ // Setting
+				strcat(instruction->mnemonic, "I");
+			}
+		}
 	}else if ((encoding & THUMB_MASK_LDSTM) == THUMB_OPCODE_LDSTM){
 		// Load/store multiple
 		instruction->type = THUMB_TYPE_LDSTM;

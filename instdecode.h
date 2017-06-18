@@ -43,6 +43,8 @@
 #define THUMB_MASK32_BRANCH        0xF8008000
 #define THUMB_MASK32_MRS           0xFFE0D000
 #define THUMB_MASK32_MSR           0xFFE0D000
+#define THUMB_MASK_MISC_CPS        0xFFE0
+
 
 // Opcodes
 #define THUMB_OPCODE_SHIFTIMM        0x0000
@@ -74,7 +76,7 @@
 #define THUMB_OPCODE32_BRANCH        0xF0008000 // B
 #define THUMB_OPCODE32_MRS           0xF3E08000 // B
 #define THUMB_OPCODE32_MSR           0xF3808000 // B
-
+#define THUMB_OPCODE_MISC_CPS        0xB660
 
 // Instruction type definitions
 #define THUMB_TYPE_SHIFTIMM        1
@@ -101,6 +103,8 @@
 #define THUMB_TYPE_LDSTSINGLE      22
 #define THUMB_TYPE_MRS             23
 #define THUMB_TYPE_MSR             24
+
+#define THUMB_TYPE_MISC_CPS        25
 
 // Register definitions for the MRS instruction
 #define MRS_REGISTER_MSP           8

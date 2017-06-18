@@ -278,6 +278,14 @@ uint16_t *findLastPrivilegedMemoryAccess(uint16_t *startingAddress)
 	return (uint16_t*)-1;
 }
 
+/*
+ * trackMRS
+ *
+ * Starting at the address offendingInstruction, trace back through the program
+ * trace sequentially in memory looking for MRS or MSR instructions. Return the
+ * address of the MRS/MSR instruction.
+ *
+ */
 uint16_t *trackMRS(uint16_t *offendingInstruction){
 	int i;
 	struct inst instruction;
@@ -291,6 +299,27 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 	return (uint16_t*)-1;
 }
 
+
+/*
+ * trackCPS
+ *
+ * Starting at the address offendingInstruction, trace back through the program
+ * trace sequentially in memory looking for CPS instructions. Return the address
+ * of the CPS instruction.
+ *
+ */
+uint16_t *trackCPS(uint16_t *offendingInstruction){
+	int i;
+	struct inst instruction;
+
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		if(instruction.type == THUMB_TYPE_MISC_CPS) {
+			return offendingInstruction-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
 
 /*
  * emulateSCBAccess
@@ -317,6 +346,14 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 				guest->guest_regs[instruction->Rt] = guest->SCB->ICSR;
 			}
 			return 0;
+		case 0xe000ed08: // VTOR
+			// Loads from the VTOR
+			if(instruction->Rd != 0xff){
+				guest->guest_regs[instruction->Rd] = guest->SCB->VTOR;
+			} else if (instruction->Rt != 0xff) {
+				guest->guest_regs[instruction->Rt] = guest->SCB->VTOR;
+			}
+			return 0;
 		default:
 			// Default action is to blindly execute privileged SCB access
 			break;
@@ -340,6 +377,16 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 		if(icsrVal & (1<<27)){ // PendSV Clear bit
 			guest->SCB->ICSR &= ~(1<<28);
 		}
+		return 0;
+		case 0xe000ed08: // VTOR
+			// Different load instruction types use different register fields to specify
+			// the destination of the load, so check which one we're using and put the
+			// virtual ICSR value into that reg.
+			if(instruction->Rd != 0xff){
+				guest->SCB->VTOR = guest->guest_regs[instruction->Rd];
+			} else if (instruction->Rt != 0xff) {
+				guest->SCB->VTOR = guest->guest_regs[instruction->Rt];
+			}
 		return 0;
 		default:
 		// Default action is to blindly execute privileged SCB access
@@ -392,7 +439,8 @@ void exceptionProcessor() {
 		busFaultStatus = BFSR;
 		if(usageFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_USAGEFAULT_ISR_NUM;
-		} else if ((busFaultStatus & 0x39) != 0){
+//		} else if ((busFaultStatus & 0x39) != 0){
+		} else if (busFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_BUSFAULT_ISR_NUM;
 		} else if ((MMFSR & 0x7f) != 0){
 			exceptionNum = ARM_CORTEX_M7_MEMMANAGEFAULT_ISR_NUM;
@@ -506,57 +554,76 @@ void exceptionProcessor() {
 				);
 
 				offendingInstruction = trackMRS(guestPC-1);
-				instDecode(&instruction, offendingInstruction); // Decode the instruction
-				switch(instruction.imm){ // instDecode places the register number in instruction.imm
-				case MRS_REGISTER_MSP:
-					if(instruction.type == THUMB_TYPE_MRS){
-						guest_regs[instruction.Rd] = (uint32_t)currGuest->MSP;
-					} else if(instruction.type == THUMB_TYPE_MSR){
-						char temp_stack_frame[32];
+				if(offendingInstruction != -1){
+					instDecode(&instruction, offendingInstruction); // Decode the instruction
+					switch(instruction.imm){ // instDecode places the register number in instruction.imm
+					case MRS_REGISTER_MSP:
+						if(instruction.type == THUMB_TYPE_MRS){
+							currGuest->guest_regs[instruction.Rd] = (uint32_t)currGuest->MSP;
+						} else if(instruction.type == THUMB_TYPE_MSR){
+							char temp_stack_frame[32];
 						
-						// NOTE: IF THE GUEST THINKS IT'S IN MASTER MODE, SET THE PROCESSOR'S PSP TO POINT TO currGuest->MSP
-						if(GUEST_IN_MASTER_MODE(currGuest)){
-							currGuest->MSP = (uint32_t*)guest_regs[instruction.Rn]; // Set the guest's MSP
+							// NOTE: IF THE GUEST THINKS IT'S IN MASTER MODE, SET THE PROCESSOR'S PSP TO POINT TO currGuest->MSP
+							if(GUEST_IN_MASTER_MODE(currGuest)){
+								currGuest->MSP = (uint32_t*)currGuest->guest_regs[instruction.Rn]; // Set the guest's MSP
 							
-							currGuest->MSP -= 32; // create an interrupt stack frame on the guest's MSP
+								currGuest->MSP -= 32; // create an interrupt stack frame on the guest's MSP
 							
-							memcpy(temp_stack_frame,psp,32); // Copy old frame to temp buffer in case the stack frames overlap
-							memcpy(currGuest->MSP,temp_stack_frame,32); // Copy the interrupt stack frame from the hardware PSP to the guest's MSP.
+								memcpy(temp_stack_frame,psp,32); // Copy old frame to temp buffer in case the stack frames overlap
+								memcpy(currGuest->MSP,temp_stack_frame,32); // Copy the interrupt stack frame from the hardware PSP to the guest's MSP.
 														
-							// Now put the requested new MSP into the hardware PSP, which is the actual stack pointer used by the guest.
-							asm("msr psp,%0"
+								// Now put the requested new MSP into the hardware PSP, which is the actual stack pointer used by the guest.
+								asm("msr psp,%0"
+								:                     /* output */
+								: "r"(currGuest->MSP) /* input */
+								:                     /* clobbered register */
+								);
+							}
+						}
+						break;
+					case MRS_REGISTER_PSP:
+						// HACK ALERT!!! WE'RE DIRECTLY READING guest_regs. We should be reading currGuest->guest_regs
+						if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
+							currGuest->guest_regs[instruction.Rd] = (uint32_t)currGuest->PSP;
+						} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
+							currGuest->PSP = (uint32_t*)currGuest->guest_regs[instruction.Rn];
+						}
+						break;
+					case MRS_REGISTER_BASEPRI:
+						// Here we're blindly setting the BASEPRI register when requested by the guest. This strategy is probably not good. Probably should be emulated.
+						////////////
+						// HACK ALERT!!! WE'RE DIRECTLY READING guest_regs. We should be reading currGuest->guest_regs
+						if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
+							asm("mrs %0,basepri\n"
+								"isb sy\n"
+								"dsb sy\n"
 							:                     /* output */
-							: "r"(currGuest->MSP) /* input */
+							: "r"(currGuest->guest_regs[instruction.Rd]) /* input */
+							:                     /* clobbered register */
+							);
+						} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
+							asm("msr basepri,%0\n"
+								"isb sy\n"
+								"dsb sy\n"
+							:                     /* output */
+							: "r"(currGuest->guest_regs[instruction.Rn]) /* input */
 							:                     /* clobbered register */
 							);
 						}
+						break;
+					} // switch(instruction.imm)
+				}// if(offendingInstruction != -1)
+				offendingInstruction = trackCPS(guestPC-1);
+				if(offendingInstruction != -1){
+					
+					// Emulate the CPS instruction. For now, we'll just rawdog it.
+					instDecode(&instruction, offendingInstruction); // Decode the instruction
+					if(instruction.imm == 0x12){ // CPSID I
+						asm("CPSID I");
+					} else if(instruction.imm == 0x02){ // CPSIE I
+						asm("CPSIE I");
 					}
-					break;
-				case MRS_REGISTER_PSP:
-					if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
-						guest_regs[instruction.Rd] = (uint32_t)currGuest->PSP;
-					} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
-						currGuest->PSP = (uint32_t*)guest_regs[instruction.Rn];
-					}
-					break;
-				case MRS_REGISTER_BASEPRI:
-					// Here we're blindly setting the BASEPRI register when requested by the guest. This strategy is probably not good. Probably should be emulated.
-					if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
-						asm("mrs %0,basepri"
-						:                     /* output */
-						: "r"(guest_regs[instruction.Rd]) /* input */
-						:                     /* clobbered register */
-						);
-					} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
-						asm("msr basepri,%0"
-						:                     /* output */
-						: "r"(guest_regs[instruction.Rn]) /* input */
-						:                     /* clobbered register */
-						);
-					}
-					break;
-				} // switch(instruction.imm)
-				
+				}// if(offendingInstruction != -1)
 			} else {
 				// Search RAM for 0x80000060
 				int *ptr =  0x20400000;
@@ -609,11 +676,11 @@ void exceptionProcessor() {
 				newLR = 0xFFFFFFFD;
 			}
 						
-			newStackFrame[0] = guest_regs[0];
-			newStackFrame[1] = guest_regs[1];
-			newStackFrame[2] = guest_regs[2];
-			newStackFrame[3] = guest_regs[3];
-			newStackFrame[4] = guest_regs[12];
+			newStackFrame[0] = currGuest->guest_regs[0];
+			newStackFrame[1] = currGuest->guest_regs[1];
+			newStackFrame[2] = currGuest->guest_regs[2];
+			newStackFrame[3] = currGuest->guest_regs[3];
+			newStackFrame[4] = currGuest->guest_regs[12];
 			newStackFrame[5] = newLR;
 			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM); // Find the guest's PendSV handler
 			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
@@ -651,16 +718,16 @@ void exceptionProcessor() {
 			newLR = 0xFFFFFFFD;
 		}
 			
-		newStackFrame[0] = guest_regs[0];
-		newStackFrame[1] = guest_regs[1];
-		newStackFrame[2] = guest_regs[2];
-		newStackFrame[3] = guest_regs[3];
-		newStackFrame[4] = guest_regs[12];
-		newStackFrame[5] = guest_regs[14];
+		newStackFrame[0] = currGuest->guest_regs[0];
+		newStackFrame[1] = currGuest->guest_regs[1];
+		newStackFrame[2] = currGuest->guest_regs[2];
+		newStackFrame[3] = currGuest->guest_regs[3];
+		newStackFrame[4] = currGuest->guest_regs[12];
+		newStackFrame[5] = currGuest->guest_regs[14];
 		newStackFrame[6] = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_PENDSV_ISR_NUM); // Find the guest's PendSV handler
 		newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 
-		guest_regs[14] = newLR;
+		currGuest->guest_regs[14] = newLR;
 		
 		// Clear Bit 9 of the PSR on the stack to indicate stack alignment
 		// See ARM Cortex M7 Generic User Guide Section 4.3.7. Configuration and Control Register
