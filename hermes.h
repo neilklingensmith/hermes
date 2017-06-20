@@ -14,7 +14,7 @@
 #include <stdint.h>
 
 
-#define HV_STACK_SIZE 512
+#define HV_STACK_SIZE 2048
 
 // System control block for ARM Cortex M7 CPU
 struct scb {
