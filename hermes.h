@@ -56,6 +56,11 @@ void hvInit(void*) __attribute__((naked));
 void exceptionProcessor(void) ;
 
 
+
+#define __SYNCH__() asm("dsb sy\nisb sy\n")
+
+
+
 /*
  * VM Status - 32-bit Number 
  *
@@ -102,7 +107,7 @@ void exceptionProcessor(void) ;
 #define BFSR_IMPRECISEERR_MASK 0x00000004
 #define BFSR_BFARVALID_MASK    0x00000080
 
-
+#define SCB_SHPR1 (*(uint32_t*)0xe000ed18) // System handler priority register 1, controls priority of UsageFault, BusFault, MemManage exceptions
 
 ///////////////////////////////////////////////
 // ARM Cortex ISR numbers

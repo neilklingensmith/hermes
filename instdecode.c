@@ -246,6 +246,7 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		if((encoding & THUMB_MASK_MISC_CPS) == THUMB_OPCODE_MISC_CPS){
 			instruction->type = THUMB_TYPE_MISC_CPS;
 			instruction->imm = encoding & 0x1f;
+			instruction->nbytes = 2;
 			
 			if((instruction->imm & 0x10) == 0){ // Check the immediate bit (enable)
 				strcpy(instruction->mnemonic, "CPSID ");

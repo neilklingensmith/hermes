@@ -55,8 +55,6 @@ void hvInit(void *gET) {
 	"  push {r1-r12,r14}\n"
 	"  mrs %0,msp\n"
 	"  msr psp,%0\n"
-//	"  add %0,%0,52\n"
-//	"  msr msp,%0\n"
 	:                   /* output */
 	:"r"(oldMSP) /* input */
 	:                   /* clobbered register */
@@ -96,7 +94,9 @@ void hvInit(void *gET) {
 	
 	SHCSR = (1<<18) | (1<<17) | (1<<16); // Enable bus, usage, and memmanage faults
 
-	//CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
+	//CORTEXM7_CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
+
+	//SCB_SHPR1 = 0x00ffffff; // Set UsageFault, BusFault, MemManage exceptions to highest priority
 
 	// Update main stack pointer with HV's top of stack.
 	__asm volatile
@@ -119,7 +119,6 @@ void hvInit(void *gET) {
 	// return
 	__asm volatile
 	(
-//	"  pop {r1-r12,r14}\n"
 	"  bx lr\n"
 	);
 }
@@ -132,9 +131,7 @@ void hvInit(void *gET) {
  */
 uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
 	return (uint32_t*)((uint32_t*)guest->vectorTable)[interruptNum]; // stub that returns function pointer to guest exception table.
-	//return (int*)guestExceptionTable[interruptNum]; // stub that returns function pointer to guest exception table.
 }
-
 
 /*
  * genericHandler
@@ -149,7 +146,7 @@ void genericHandler() __attribute__((naked));
 void genericHandler(){
 	// Save the guest registers into the guest registers array
 	__asm volatile (
-//	"  cpsie i\n"                // Disable interrupts
+	"  cpsid i\n"
 	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
 	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r0,[r0]\n"
@@ -178,6 +175,7 @@ void genericHandler(){
 	"  stm r5,{r0-r3,r12,r14}\n" // Put guest reigsters from guest_regs array onto the exception stack frame
 	"  ldm r4,{r0-r12}\n"
 	"  pop {lr}\n"               // Pop the LR, which holds EXC_RETURN, saved on the stack at beginning of genericHandler
+	"  cpsie i\n"
 	"  bx lr\n"
 	);
 }
@@ -299,27 +297,6 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 	return (uint16_t*)-1;
 }
 
-
-/*
- * trackCPS
- *
- * Starting at the address offendingInstruction, trace back through the program
- * trace sequentially in memory looking for CPS instructions. Return the address
- * of the CPS instruction.
- *
- */
-uint16_t *trackCPS(uint16_t *offendingInstruction){
-	int i;
-	struct inst instruction;
-
-	for(i = 0; i < 5 ; i++){
-		instDecode(&instruction, offendingInstruction-i);
-		if(instruction.type == THUMB_TYPE_MISC_CPS) {
-			return offendingInstruction-i;
-		}
-	}
-	return (uint16_t*)-1;
-}
 
 /*
  * emulateSCBAccess
@@ -447,9 +424,6 @@ void exceptionProcessor() {
 		}
 	}
 
-
-	//guestExceptionVector = locateGuestISR(currGuest,exceptionNum);
-
 	switch(exceptionNum){
 		case 2: // NMI
 			break;
@@ -469,7 +443,7 @@ void exceptionProcessor() {
 				:"r"(currGuest->PSP)         /* input */
 				:                            /* clobbered register */
 				);
-				
+
 				// Preserve registers that were clobbered by the exception handler
 				newStackFrame = currGuest->PSP;
 				currGuest->guest_regs[0] = newStackFrame[0];
@@ -478,7 +452,7 @@ void exceptionProcessor() {
 				currGuest->guest_regs[3] = newStackFrame[3];
 				currGuest->guest_regs[12] = newStackFrame[4];
 				currGuest->guest_regs[14] = newStackFrame[5];
-				
+
 			} else {
 				// Otherwise we're returning to master mode
 				SET_PROCESSOR_MODE_MASTER(currGuest);
@@ -490,13 +464,6 @@ void exceptionProcessor() {
 				:                            /* clobbered register */
 				);
 			}
-			
-			__asm volatile (
-					"cpsie i\n" // Enable All exceptions by setting primask to 0
-					//"mov r0,#0\n" // Enable All exceptions by setting primask to 0
-					//"msr primask,r0"
-					);
-
 			break;
 		case 5: // BusFault
 			busFaultStatus = BFSR;
@@ -524,7 +491,6 @@ void exceptionProcessor() {
 				// Increment the return address on the exception stack frame
 				*(psp+6) += instruction.nbytes;
 			}
-
 
 			if((int32_t)offendingInstruction != (uint16_t*)-1) { // HACK ALERT!! Hack to avoid problem of unexplained access to 0xe000ed20
 
@@ -590,16 +556,14 @@ void exceptionProcessor() {
 								);
 							}
 						}
-						UFSR = 0xff; // Clear UFSR
-						return;
+						break;
 					case MRS_REGISTER_PSP:
 						if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
 							currGuest->guest_regs[instruction.Rd] = (uint32_t)currGuest->PSP;
 						} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
 							currGuest->PSP = (uint32_t*)currGuest->guest_regs[instruction.Rn];
 						}
-						UFSR = 0xff; // Clear UFSR
-						return;
+						break;
 					case MRS_REGISTER_BASEPRI:
 						// Here we're blindly setting the BASEPRI register when requested by the guest. This strategy is probably not good. Probably should be emulated.
 						if((instruction.type == THUMB_TYPE_MRS) && GUEST_IN_MASTER_MODE(currGuest)){
@@ -619,25 +583,9 @@ void exceptionProcessor() {
 							:                     /* clobbered register */
 							);
 						}
-						UFSR = 0xff; // Clear UFSR
-						return;
+						break;
 					} // switch(instruction.imm)
 				}// if(offendingInstruction != -1)
-				offendingInstruction = trackCPS(guestPC-1);
-				if(offendingInstruction != -1){
-					// Emulate the CPS instruction. For now, we'll just rawdog it.
-					instDecode(&instruction, offendingInstruction); // Decode the instruction
-					if(instruction.imm == 0x12){ // CPSID I
-						asm("CPSID I");
-						UFSR = 0xff; // Clear UFSR
-						return;
-					} else if(instruction.imm == 0x02){ // CPSIE I
-						asm("CPSIE I");
-						UFSR = 0xff; // Clear UFSR
-						return;
-					}
-				} // if(offendingInstruction != -1)
-				
 				///////////////////////////////////////////////////////////////
 				// NOTE: Here we have an undefined instruction that does not
 				// seem to be related to an MRS or CPS. We should probably
@@ -689,7 +637,6 @@ void exceptionProcessor() {
 				newLR = 0xFFFFFFF1;
 			} else {
 				newStackFrame = currGuest->MSP - 8;
-				//memcpy(currGuest->MSP-8,psp,32); // Copy the exception stack frame produced by the CPU from the guest's thread stack to the guest's master stack
 				currGuest->PSP = psp;
 				newLR = 0xFFFFFFFD;
 			}
@@ -700,16 +647,13 @@ void exceptionProcessor() {
 			newStackFrame[3] = currGuest->guest_regs[3];
 			newStackFrame[4] = currGuest->guest_regs[12];
 			newStackFrame[5] = newLR; // SHOULD BE currGuest->guest_regs[14]
-			//newStackFrame[5] = currGuest->guest_regs[14];
 			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM); // Find the guest's PendSV handler
 			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
-
 			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
 
 			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 			__asm volatile(
 			"msr psp,%0\n"
-			"cpsid i\n" // Mask All exceptions by setting primask to 1
 			:                           /* output */
 			:"r"(newStackFrame)         /* input */
 			:                           /* clobbered register */
@@ -722,8 +666,6 @@ void exceptionProcessor() {
 	// Check to see if we have a PendSV exception pending on this guest.
 	// Make sure we are not already executing a PendSV exception handler.
 	if((currGuest->SCB->ICSR & (1<<28)) && !GUEST_IN_MASTER_MODE(currGuest)) {
-		
-		
 		// re-read the PSP since it might have been changed by the MemManage handler
 		__asm
 		(
@@ -734,16 +676,10 @@ void exceptionProcessor() {
 		);
 		// Clear the PendSVSet bit in ICSR
 		currGuest->SCB->ICSR &= ~(1<<28);
-		
-//		if(GUEST_IN_MASTER_MODE(currGuest)){
-//			newStackFrame = psp - 8;
-//			newLR = 0xFFFFFFF1;
-//		} else {
-			newStackFrame = currGuest->MSP - 8;
-			currGuest->PSP = psp;
-			newLR = 0xFFFFFFFD;
-//		}
-			
+
+		newStackFrame = currGuest->MSP - 8;
+		currGuest->PSP = psp;
+		newLR = 0xFFFFFFFD;
 		newStackFrame[0] = currGuest->guest_regs[0];
 		newStackFrame[1] = currGuest->guest_regs[1];
 		newStackFrame[2] = currGuest->guest_regs[2];
@@ -754,33 +690,14 @@ void exceptionProcessor() {
 		newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 
 		currGuest->guest_regs[14] = newLR;
-		
-		// Clear Bit 9 of the PSR on the stack to indicate stack alignment
-		// See ARM Cortex M7 Generic User Guide Section 4.3.7. Configuration and Control Register
-		//*(newStackFrame+7) &= ~(1<<9);
-
 		SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 		__asm volatile(
 		"msr psp,%0\n"
-		"cpsid i\n" // Mask All exceptions by setting primask to 1
 		:                           /* output */
 		:"r"(newStackFrame)         /* input */
 		:"r0"                       /* clobbered register */
 		);
 	}
-
-	// DEBUG ONLY!!!
-	uint32_t *stackframe;
-	
-	
-	__asm volatile (
-	"mrs %0, psp\n" : "=r"(stackframe)::);
-	
-	if(stackframe[6] > 0x4fffff){
-		while(1);
-	}
-
-	// END DEBUG ONLY
 
 	return;
 
