@@ -34,13 +34,13 @@ SOFTWARE.
 
 char hvStack[HV_STACK_SIZE];
 
-int **guestExceptionTable;
+//int **guestExceptionTable;
 
 char privexe[64]; // memory to hold code to execute privileged instructions.
 
 struct vm *guestList = NULL, *currGuest = NULL;
-struct vm guests[1];
-struct scb SCB[1];
+//struct vm guests[1];
+//struct scb SCB[1];
 
 uint32_t guest_regs[15];
 
@@ -53,17 +53,25 @@ uint32_t guest_regs[15];
  * instruction to be executed.
  *
  */
+
+
 void dummyfunc() __attribute__((naked));
 void dummyfunc()
 {
 	__asm volatile (
 	"  push {r1-r12,r14}\n"
-	"  ldr r1,=guest_regs\n"
+	"  ldr r1,=currGuest\n"      // Use R0 to point to the guest_regs array
+	"  ldr r1,[r1]\n"
+	"  ldr r1,[r1,#32]\n"
 	"  ldm r1,{r0-r12,r14}\n"
 	"  nop\n"
 	"  nop\n"
 	"  push {r0}\n"
-	"  ldr r0,=guest_regs+4\n" // Use R0 to point to the guest_regs array
+
+	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
+	"  ldr r0,[r0]\n"
+	"  ldr r0,[r0,#32]\n"
+	"  add r0,r0,#4\n"
 	"  stm r0,{r1-r12,r14}\n"  // Store guest registers
 	"  sub r0,r0,4\n"
 	"  pop {r1}\n"
@@ -73,33 +81,42 @@ void dummyfunc()
 	);
 }
 
-void createGuest(void *guestExceptionTable){
+int createGuest(void *guestExceptionTable){
+	struct vm *newGuest = nalloc(sizeof(struct vm));
+	struct scb *newSCB = nalloc(sizeof(struct scb));
+	uint32_t *new_guest_regs = nalloc(16*sizeof(uint32_t));
+	
+	if(newGuest == -1 || newSCB == -1 || new_guest_regs == -1){
+		return -1;
+	}
+	
 	// Set up a linked list of guests
 	guestList = NULL;
 	currGuest = NULL;
 	
-	guestList = &guests[0]; // For now, we have only one guest
-	currGuest = &guests[0]; // Normally this stuff would be dynamically allocated
-	guests[0].guest_regs = &guest_regs[0];
+	guestList = newGuest; // For now, we have only one guest
+	currGuest = newGuest; // Normally this stuff would be dynamically allocated
+	newGuest->guest_regs = new_guest_regs;
 	
-	guests[0].SCB = &SCB[0];
+	newGuest->SCB = newSCB;
 	
 	// Initialize the SCB
-	memset(&SCB[0], 0, sizeof(struct scb));
-	guests[0].SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
-	guests[0].SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
-	guests[0].SCB->CCR = 0x00000200;   // Set CCR to reset value
+	memset(newSCB, 0, sizeof(struct scb));
+	newGuest->SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
+	newGuest->SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
+	newGuest->SCB->CCR = 0x00000200;   // Set CCR to reset value
 
 	currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
 	
 	// Set up guest data structures.
-	guestExceptionTable = guestExceptionTable;
+	//guestExceptionTable = guestExceptionTable;
 	currGuest->vectorTable = guestExceptionTable;
 }
 
 void hvInit(void *gET) {
 	uint32_t oldMSP = 0;
 	uint32_t returnAddress;
+	
 
 	// Save regs & preserve MSP
 	__asm volatile
@@ -122,7 +139,8 @@ void hvInit(void *gET) {
 	:                    /* clobbered register */
 	);
 	
-	// Copy register contents from old stack to new stack
+	// Initialize the memory allocator
+	memInit();
 	
 	createGuest(gET);
 	
@@ -224,7 +242,7 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
 	// TODO: put the instruction to execute inside dummyfunc, replacing NOPs
 	char *srcptr = (char*)&dummyfunc;
 	memcpy(privexe, (char*)((uint32_t)srcptr & 0xfffffffe), 64); // Copy dummyfunc into privexe array. NOTE: the (srcptr & 0xfe) is a workaround because gcc always adds 1 to the address of a function pointer because
-	memcpy(privexe+10, (char*)offendingInstruction, instruction->nbytes);
+	memcpy(privexe+14, (char*)offendingInstruction, instruction->nbytes);
 
 	__asm volatile(
 	"  push {lr}\n"
