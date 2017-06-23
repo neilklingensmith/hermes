@@ -1,4 +1,32 @@
 
+/*
+
+MIT License
+
+Copyright (c) 2017 Neil Klingensmith
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
+
+
+
 #include "hermes.h"
 #include "instdecode.h"
 #include <stdint.h>
@@ -10,7 +38,7 @@ int **guestExceptionTable;
 
 char privexe[64]; // memory to hold code to execute privileged instructions.
 
-struct vm *guestList, *currGuest;
+struct vm *guestList = NULL, *currGuest = NULL;
 struct vm guests[1];
 struct scb SCB[1];
 
@@ -45,6 +73,30 @@ void dummyfunc()
 	);
 }
 
+void createGuest(void *guestExceptionTable){
+	// Set up a linked list of guests
+	guestList = NULL;
+	currGuest = NULL;
+	
+	guestList = &guests[0]; // For now, we have only one guest
+	currGuest = &guests[0]; // Normally this stuff would be dynamically allocated
+	guests[0].guest_regs = &guest_regs[0];
+	
+	guests[0].SCB = &SCB[0];
+	
+	// Initialize the SCB
+	memset(&SCB[0], 0, sizeof(struct scb));
+	guests[0].SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
+	guests[0].SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
+	guests[0].SCB->CCR = 0x00000200;   // Set CCR to reset value
+
+	currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
+	
+	// Set up guest data structures.
+	guestExceptionTable = guestExceptionTable;
+	currGuest->vectorTable = guestExceptionTable;
+}
+
 void hvInit(void *gET) {
 	uint32_t oldMSP = 0;
 	uint32_t returnAddress;
@@ -72,24 +124,7 @@ void hvInit(void *gET) {
 	
 	// Copy register contents from old stack to new stack
 	
-	// Set up a linked list of guests
-	guestList = &guests[0]; // For now, we have only one guest
-	currGuest = &guests[0]; // Normally this stuff would be dynamically allocated
-	guests[0].guest_regs = &guest_regs[0];
-	
-	guests[0].SCB = &SCB[0];
-	
-	// Initialize the SCB
-	memset(&SCB[0], 0, sizeof(struct scb));
-	guests[0].SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
-	guests[0].SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
-	guests[0].SCB->CCR = 0x00000200;   // Set CCR to reset value
-
-	currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
-	
-	// Set up guest data structures.
-	guestExceptionTable = gET;
-	currGuest->vectorTable = gET;
+	createGuest(gET);
 	
 	SHCSR = (1<<18) | (1<<17) | (1<<16); // Enable bus, usage, and memmanage faults
 
