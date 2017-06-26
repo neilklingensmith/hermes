@@ -34,7 +34,7 @@ SOFTWARE.
 #include <stdint.h>
 
 
-#define HV_STACK_SIZE 2048
+#define HV_STACK_SIZE 4096
 
 // System control block for ARM Cortex M7 CPU
 struct scb {
@@ -70,10 +70,19 @@ struct vm {
 	struct scb *SCB;
 };
 
+/*
+ * Generic linked list element
+ *
+ */
+struct listElement {
+	struct listElement *next;
+	struct listElement *prev;
+};
 
-
-void hvInit(void*) __attribute__((naked));
+void hvInit();
 void exceptionProcessor(void) ;
+void genericHandler() __attribute__((naked));
+void hermesResetHandler();
 
 
 
@@ -111,6 +120,8 @@ void exceptionProcessor(void) ;
 // ARM Cortex Specific Regs
 
 #define SHCSR (*(uint32_t*)0xe000ed24)
+
+#define CORTEXM7_VTOR  (*(uint32_t*)0xe000ed08)
 
 #define CFSR (*(uint32_t*)0xe000ed28)  // Configurable Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
 #define MMFSR (*(uint8_t*)0xe000ed28)  // Memory Management Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)

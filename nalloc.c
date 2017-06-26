@@ -112,6 +112,8 @@ void listDelete(struct block *b)
  */
 void memInit()
 {
+	freeListHead = NULL;
+	allocatedListHead = NULL ;
 	struct block *temp = (struct block*)heap ;
 
 	// Insert the heap into the free list.

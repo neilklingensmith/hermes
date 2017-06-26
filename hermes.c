@@ -25,8 +25,6 @@ SOFTWARE.
 
 */
 
-
-
 #include "hermes.h"
 #include "instdecode.h"
 #include <stdint.h>
@@ -43,6 +41,98 @@ struct vm *guestList = NULL, *currGuest = NULL;
 //struct scb SCB[1];
 
 uint32_t guest_regs[15];
+
+
+__attribute__ ((section(".vectors")))
+void *hvVectorTable[] __attribute__ ((aligned (128))) = {
+	/* Configure Initial Stack Pointer, using linker-generated symbols */
+	(void*) (void*) (&hvStack[HV_STACK_SIZE]-4),/* Initial stack pointer */
+	(void*) hermesResetHandler,/* Reset Handler */
+	(void*) genericHandler,    /* NMI Handler */
+	(void*) genericHandler,    /* Hard Fault Handler */
+	(void*) genericHandler,    /* MemManage Handler */
+	(void*) genericHandler,    /* Bus Fault Manager */
+	(void*) genericHandler,    /* Usage Fault Handler */
+	(void*) genericHandler,    /* Reserved */
+	(void*) genericHandler,    /* Reserved */
+	(void*) genericHandler,    /* Reserved */
+	(void*) genericHandler,    /* Reserved */
+	(void*) genericHandler,    /* SVC Handler */
+	(void*) genericHandler,    /* Debug Mon Handler */
+	(void*) genericHandler,    /* Reserved */
+	(void*) genericHandler,    /* PendSV Handler */
+	(void*) genericHandler,    /* SysTick Handler */
+
+	/* Configurable interrupts */
+	(void*) genericHandler,    /* 0  Supply Controller */
+	(void*) genericHandler,    /* 1  Reset Controller */
+	(void*) genericHandler,    /* 2  Real Time Clock */
+	(void*) genericHandler,    /* 3  Real Time Timer */
+	(void*) genericHandler,    /* 4  Watchdog Timer */
+	(void*) genericHandler,    /* 5  Power Management Controller */
+	(void*) genericHandler,    /* 6  Enhanced Embedded Flash Controller */
+	(void*) genericHandler,    /* 7  UART 0 */
+	(void*) genericHandler,    /* 8  UART 1 */
+	(void*) genericHandler,    /* 9  Reserved */
+	(void*) genericHandler,    /* 10 Parallel I/O Controller A */
+	(void*) genericHandler,    /* 11 Parallel I/O Controller B */
+	(void*) genericHandler,    /* 12 Parallel I/O Controller C */
+	(void*) genericHandler,    /* 13 USART 0 */
+	(void*) genericHandler,    /* 14 USART 1 */
+	(void*) genericHandler,    /* 15 USART 2 */
+	(void*) genericHandler,    /* 16 Parallel I/O Controller D */
+	(void*) genericHandler,    /* 17 Parallel I/O Controller E */
+	(void*) genericHandler,    /* 18 Multimedia Card Interface */
+	(void*) genericHandler,    /* 19 Two Wire Interface 0 HS */
+	(void*) genericHandler,    /* 20 Two Wire Interface 1 HS */
+	(void*) genericHandler,    /* 21 Serial Peripheral Interface 0 */
+	(void*) genericHandler,    /* 22 Synchronous Serial Controller */
+	(void*) genericHandler,    /* 23 Timer/Counter 0 */
+	(void*) genericHandler,    /* 24 Timer/Counter 1 */
+	(void*) genericHandler,    /* 25 Timer/Counter 2 */
+	(void*) genericHandler,    /* 26 Timer/Counter 3 */
+	(void*) genericHandler,    /* 27 Timer/Counter 4 */
+	(void*) genericHandler,    /* 28 Timer/Counter 5 */
+	(void*) genericHandler,    /* 29 Analog Front End 0 */
+	(void*) genericHandler,    /* 30 Digital To Analog Converter */
+	(void*) genericHandler,    /* 31 Pulse Width Modulation 0 */
+	(void*) genericHandler,    /* 32 Integrity Check Monitor */
+	(void*) genericHandler,    /* 33 Analog Comparator */
+	(void*) genericHandler,    /* 34 USB Host / Device Controller */
+	(void*) genericHandler,    /* 35 MCAN Controller 0 */
+	(void*) genericHandler,    /* 36 Reserved */
+	(void*) genericHandler,    /* 37 MCAN Controller 1 */
+	(void*) genericHandler,    /* 38 Reserved */
+	(void*) genericHandler,    /* 39 Ethernet MAC */
+	(void*) genericHandler,    /* 40 Analog Front End 1 */
+	(void*) genericHandler,    /* 41 Two Wire Interface 2 HS */
+	(void*) genericHandler,    /* 42 Serial Peripheral Interface 1 */
+	(void*) genericHandler,    /* 43 Quad I/O Serial Peripheral Interface */
+	(void*) genericHandler,    /* 44 UART 2 */
+	(void*) genericHandler,    /* 45 UART 3 */
+	(void*) genericHandler,    /* 46 UART 4 */
+	(void*) genericHandler,    /* 47 Timer/Counter 6 */
+	(void*) genericHandler,    /* 48 Timer/Counter 7 */
+	(void*) genericHandler,    /* 49 Timer/Counter 8 */
+	(void*) genericHandler,    /* 50 Timer/Counter 9 */
+	(void*) genericHandler,    /* 51 Timer/Counter 10 */
+	(void*) genericHandler,    /* 52 Timer/Counter 11 */
+	(void*) genericHandler,    /* 53 Reserved */
+	(void*) genericHandler,    /* 54 Reserved */
+	(void*) genericHandler,    /* 55 Reserved */
+	(void*) genericHandler,    /* 56 AES */
+	(void*) genericHandler,    /* 57 True Random Generator */
+	(void*) genericHandler,    /* 58 DMA */
+	(void*) genericHandler,    /* 59 Camera Interface */
+	(void*) genericHandler,    /* 60 Pulse Width Modulation 1 */
+	(void*) genericHandler,    /* 61 Reserved */
+	(void*) genericHandler,    /* 62 SDRAM Controller */
+	(void*) genericHandler     /* 63 Reinforced Secure Watchdog Timer */
+};
+
+
+
+
 
 /*
  * dummyfunc
@@ -81,22 +171,49 @@ void dummyfunc()
 	);
 }
 
+
+int listAdd(struct listElement **head, struct listElement *newElement){
+	struct listElement *iterator = (struct listElement*)head ;
+
+	// Step through the list until iterator points to the last
+	// element in the list that is at a lower address than b.
+	//while(iterator->next != NULL && b > iterator->next)
+		//iterator = iterator->next ;
+
+	// Link element b into the list between iterator and iterator->next.
+	newElement->next = iterator->next ;
+	newElement->prev = iterator ;
+
+	iterator->next = newElement ;
+	
+	if(newElement->next != NULL){
+		newElement->next->prev = newElement ;
+	}
+	return 0;
+}
+
 int createGuest(void *guestExceptionTable){
 	struct vm *newGuest = nalloc(sizeof(struct vm));
 	struct scb *newSCB = nalloc(sizeof(struct scb));
 	uint32_t *new_guest_regs = nalloc(16*sizeof(uint32_t));
 	
-	if(newGuest == -1 || newSCB == -1 || new_guest_regs == -1){
+	if((uint32_t)newGuest == -1 || (uint32_t)newSCB == -1 || (uint32_t)new_guest_regs == -1){
 		return -1;
 	}
-	
-	// Set up a linked list of guests
-	guestList = NULL;
-	currGuest = NULL;
-	
-	guestList = newGuest; // For now, we have only one guest
-	currGuest = newGuest; // Normally this stuff would be dynamically allocated
+
+	listAdd((struct listElement **)&guestList, (struct listElement *)newGuest);
+	//guestList = newGuest; // For now, we have only one guest
+	//currGuest = newGuest; // Normally this stuff would be dynamically allocated
 	newGuest->guest_regs = new_guest_regs;
+	
+	// Set up guest data structures.
+	newGuest->vectorTable = guestExceptionTable;
+
+	// Set up the new guest's master stack
+	newGuest->MSP = (((uint32_t*)(newGuest->vectorTable))[0] - 8) & 0xfffffff8;
+	memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
+	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->vectorTable)[1];
+	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 	
 	newGuest->SCB = newSCB;
 	
@@ -105,69 +222,31 @@ int createGuest(void *guestExceptionTable){
 	newGuest->SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
 	newGuest->SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
 	newGuest->SCB->CCR = 0x00000200;   // Set CCR to reset value
+	newGuest->SCB->VTOR = guestExceptionTable;
 
-	currGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
+	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
 	
-	// Set up guest data structures.
-	//guestExceptionTable = guestExceptionTable;
-	currGuest->vectorTable = guestExceptionTable;
+	
+	currGuest = guestList; // Point currGuest to first element in guestList
 }
 
-void hvInit(void *gET) {
-	uint32_t oldMSP = 0;
-	uint32_t returnAddress;
-	
-
-	// Save regs & preserve MSP
-	__asm volatile
-	(
-	"  push {r1-r12,r14}\n"
-	"  mrs %0,msp\n"
-	"  msr psp,%0\n"
-	:                   /* output */
-	:"r"(oldMSP) /* input */
-	:                   /* clobbered register */
-	);
-	uint32_t stackTop = (uint32_t)hvStack+HV_STACK_SIZE-4*14;
-
-	// Save return address
-	__asm volatile
-	(
-	"  mov %0,r14\n"
-	:"=r"(returnAddress) /* output */
-	:                    /* input */
-	:                    /* clobbered register */
-	);
-	
+void hvInit() {
 	// Initialize the memory allocator
 	memInit();
-	
-	createGuest(gET);
+		
+	// Copy dummyfunc into RAM. This is used to execute privileged instructions
+	char *srcptr = (char*)&dummyfunc;
+	memcpy(privexe, (char*)((uint32_t)srcptr & 0xfffffffe), 64); // Copy dummyfunc into privexe array. NOTE: the (srcptr & 0xfe) is a workaround because gcc always adds 1 to the address of a function pointer because
+
+	// Set up a linked list of guests
+	guestList = NULL;
+	currGuest = NULL;
 	
 	SHCSR = (1<<18) | (1<<17) | (1<<16); // Enable bus, usage, and memmanage faults
 
 	//CORTEXM7_CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
 
 	//SCB_SHPR1 = 0x00ffffff; // Set UsageFault, BusFault, MemManage exceptions to highest priority
-
-	// Update main stack pointer with HV's top of stack.
-	__asm volatile
-	(
-	"  msr msp,%0\n"
-	:                   /* output */
-	:"r"(stackTop) /* input */
-	:                   /* clobbered register */
-	);
-	// Switch to unpriv execution
-	__asm volatile
-	(
-	"  mrs r0,psp\n"      // Get PSP in R0
-	"  ldm r0!,{r1-r12,r14}\n" // Get saved regs off PSP
-	"  mrs r0,control\n"
-	"  orr r0,r0,#3\n"
-	"  msr control,r0\n"
-	"  bx lr\n" // Return
-	);
 }
 
 /*
@@ -189,7 +268,6 @@ uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
  * the exceptionProcessor handler.
  *
  */
-void genericHandler() __attribute__((naked));
 void genericHandler(){
 	// Save the guest registers into the guest registers array
 	__asm volatile (
@@ -239,11 +317,11 @@ void genericHandler(){
  */
 void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *instruction)
 {
-	// TODO: put the instruction to execute inside dummyfunc, replacing NOPs
 	char *srcptr = (char*)&dummyfunc;
 	memcpy(privexe, (char*)((uint32_t)srcptr & 0xfffffffe), 64); // Copy dummyfunc into privexe array. NOTE: the (srcptr & 0xfe) is a workaround because gcc always adds 1 to the address of a function pointer because
+	*((uint32_t*)(privexe+14)) = 0xbf00bf00; // Set the target instructions in privexe to NOPs
+	
 	memcpy(privexe+14, (char*)offendingInstruction, instruction->nbytes);
-
 	__asm volatile(
 	"  push {lr}\n"
 	"  isb sy\n"
@@ -483,7 +561,8 @@ void exceptionProcessor() {
 
 			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
 
-			if((*(psp+6) & 0xe) != 0) {
+//			if((*(psp+6) & 0xe) != 0) {
+			if((currGuest->guest_regs[14] & 0xe) != 0){
 				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
 				SET_PROCESSOR_MODE_THREAD(currGuest);
 			
@@ -517,7 +596,7 @@ void exceptionProcessor() {
 			break;
 		case 5: // BusFault
 			busFaultStatus = BFSR;
-			auxBusFaultStatus = ABFSR;
+			//auxBusFaultStatus = ABFSR;
 			busFaultAddress = BFAR;
 			
 			if((busFaultStatus & BFSR_IMPRECISEERR_MASK) != 0){ // Imprecise bus fault?
@@ -735,94 +814,60 @@ void exceptionProcessor() {
 	return;
 }
 
-extern unsigned long _estack;
 
-void *hvVectorTable[] __attribute__ ((aligned (128))) = {
+/* Initialize segments */
+extern uint32_t _sfixed;
+extern uint32_t _efixed;
+extern uint32_t _etext;
+extern uint32_t _srelocate;
+extern uint32_t _erelocate;
+extern uint32_t _szero;
+extern uint32_t _ezero;
+extern uint32_t _sstack;
+extern uint32_t _estack;
+void hermesResetHandler(){
+	extern void *exception_table;
+	extern void *dummyVectorTable[];
+	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
+
+	/* Initialize the relocate segment */
+	pSrc = &_etext;
+	pDest = &_srelocate;
+
+	if (pSrc != pDest) {
+		for (; pDest < &_erelocate;) {
+			*pDest++ = *pSrc++;
+		}
+	}
+
+	/* Clear the zero segment */
+	for (pDest = &_szero; pDest < &_ezero;) {
+		*pDest++ = 0;
+	}
+
+	CORTEXM7_VTOR = ((uint32_t) hvVectorTable); // This should probably go in hvInit()
+
+	hvInit();
 	
-	/* Configure Initial Stack Pointer, using linker-generated symbols */
-	(void*) (void*) (&_estack),    /* Initial stack pointer */ // HACK ALERT!!!! This is used to bypass attempt to load the initial stack pointer from the OS's vector table in prvPortStartFirstTask, found in port.c. Hack can be avoided by virtualizing the MSR instruction
+	createGuest(&dummyVectorTable); // Init dummy guest
 
-	(void*) genericHandler,    /* Reset Handler */
-	(void*) genericHandler,    /* NMI Handler */
-	(void*) genericHandler,    /* Hard Fault Handler */
-	(void*) genericHandler,    /* MemManage Handler */
-	(void*) genericHandler,    /* Bus Fault Manager */
-	(void*) genericHandler,    /* Usage Fault Handler */
-	(void*) genericHandler,    /* Reserved */
-	(void*) genericHandler,    /* Reserved */
-	(void*) genericHandler,    /* Reserved */
-	(void*) genericHandler,    /* Reserved */
-	(void*) genericHandler,    /* SVC Handler */
-	(void*) genericHandler,    /* Debug Mon Handler */
-	(void*) genericHandler,    /* Reserved */
-	(void*) genericHandler,    /* PendSV Handler */
-	(void*) genericHandler,    /* SysTick Handler */
+	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
 
-	/* Configurable interrupts */
-	(void*) genericHandler,    /* 0  Supply Controller */
-	(void*) genericHandler,    /* 1  Reset Controller */
-	(void*) genericHandler,    /* 2  Real Time Clock */
-	(void*) genericHandler,    /* 3  Real Time Timer */
-	(void*) genericHandler,    /* 4  Watchdog Timer */
-	(void*) genericHandler,    /* 5  Power Management Controller */
-	(void*) genericHandler,    /* 6  Enhanced Embedded Flash Controller */
-	(void*) genericHandler,    /* 7  UART 0 */
-	(void*) genericHandler,    /* 8  UART 1 */
-	(void*) genericHandler,    /* 9  Reserved */
-	(void*) genericHandler,    /* 10 Parallel I/O Controller A */
-	(void*) genericHandler,    /* 11 Parallel I/O Controller B */
-	(void*) genericHandler,    /* 12 Parallel I/O Controller C */
-	(void*) genericHandler,    /* 13 USART 0 */
-	(void*) genericHandler,    /* 14 USART 1 */
-	(void*) genericHandler,    /* 15 USART 2 */
-	(void*) genericHandler,    /* 16 Parallel I/O Controller D */
-	(void*) genericHandler,    /* 17 Parallel I/O Controller E */
-	(void*) genericHandler,    /* 18 Multimedia Card Interface */
-	(void*) genericHandler,    /* 19 Two Wire Interface 0 HS */
-	(void*) genericHandler,    /* 20 Two Wire Interface 1 HS */
-	(void*) genericHandler,    /* 21 Serial Peripheral Interface 0 */
-	(void*) genericHandler,    /* 22 Synchronous Serial Controller */
-	(void*) genericHandler,    /* 23 Timer/Counter 0 */
-	(void*) genericHandler,    /* 24 Timer/Counter 1 */
-	(void*) genericHandler,    /* 25 Timer/Counter 2 */
-	(void*) genericHandler,    /* 26 Timer/Counter 3 */
-	(void*) genericHandler,    /* 27 Timer/Counter 4 */
-	(void*) genericHandler,    /* 28 Timer/Counter 5 */
-	(void*) genericHandler,    /* 29 Analog Front End 0 */
-	(void*) genericHandler,    /* 30 Digital To Analog Converter */
-	(void*) genericHandler,    /* 31 Pulse Width Modulation 0 */
-	(void*) genericHandler,    /* 32 Integrity Check Monitor */
-	(void*) genericHandler,    /* 33 Analog Comparator */
-	(void*) genericHandler,    /* 34 USB Host / Device Controller */
-	(void*) genericHandler,    /* 35 MCAN Controller 0 */
-	(void*) genericHandler,    /* 36 Reserved */
-	(void*) genericHandler,    /* 37 MCAN Controller 1 */
-	(void*) genericHandler,    /* 38 Reserved */
-	(void*) genericHandler,    /* 39 Ethernet MAC */
-	(void*) genericHandler,    /* 40 Analog Front End 1 */
-	(void*) genericHandler,    /* 41 Two Wire Interface 2 HS */
-	(void*) genericHandler,    /* 42 Serial Peripheral Interface 1 */
-	(void*) genericHandler,    /* 43 Quad I/O Serial Peripheral Interface */
-	(void*) genericHandler,    /* 44 UART 2 */
-	(void*) genericHandler,    /* 45 UART 3 */
-	(void*) genericHandler,    /* 46 UART 4 */
-	(void*) genericHandler,    /* 47 Timer/Counter 6 */
-	(void*) genericHandler,    /* 48 Timer/Counter 7 */
-	(void*) genericHandler,    /* 49 Timer/Counter 8 */
-	(void*) genericHandler,    /* 50 Timer/Counter 9 */
-	(void*) genericHandler,    /* 51 Timer/Counter 10 */
-	(void*) genericHandler,    /* 52 Timer/Counter 11 */
-	(void*) genericHandler,    /* 53 Reserved */
-	(void*) genericHandler,    /* 54 Reserved */
-	(void*) genericHandler,    /* 55 Reserved */
-	(void*) genericHandler,    /* 56 AES */
-	(void*) genericHandler,    /* 57 True Random Generator */
-	(void*) genericHandler,    /* 58 DMA */
-	(void*) genericHandler,    /* 59 Camera Interface */
-	(void*) genericHandler,    /* 60 Pulse Width Modulation 1 */
-	(void*) genericHandler,    /* 61 Reserved */
-	(void*) genericHandler,    /* 62 SDRAM Controller */
-	(void*) genericHandler     /* 63 Reinforced Secure Watchdog Timer */
-};
-
+	// Switch to unpriv execution
+	__asm volatile
+	(
+//	"  mrs r0,psp\n"      // Get PSP in R0
+//	"  ldm r0!,{r1-r12,r14}\n" // Get saved regs off PSP
+	"  msr psp,%0\n" // Put the currGuest's MSP into the PSP
+	"  cpsie i\n" // Enable exceptions
+	"  mrs r0,control\n" // Set control register to put CPU in thread mode, switching to PSP
+	"  orr r0,r0,#3\n"
+	"  msr control,r0\n"
+	"  ldr lr, =0xfffffff1\n" // Put return to handler mode, non floating point state into guest's LR
+	"  bx lr\n" // Return
+		:                        /* output */
+		: "r"(currGuest->MSP)    /* input */
+		:                        /* clobbered register */
+	);
+}
 
