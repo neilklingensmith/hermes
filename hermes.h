@@ -60,14 +60,13 @@ struct vm {
 	struct vm *next;
 	struct vm *prev;
 
-	void *vectorTable;
+	struct scb *SCB;
 	uint32_t *PSP;
 	uint32_t *MSP;
 	uint32_t PSR;
 	uint32_t EXC_RETURN;
 	uint32_t status;
 	uint32_t *guest_regs;
-	struct scb *SCB;
 };
 
 /*

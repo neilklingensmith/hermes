@@ -207,13 +207,7 @@ int createGuest(void *guestExceptionTable){
 	newGuest->guest_regs = new_guest_regs;
 	
 	// Set up guest data structures.
-	newGuest->vectorTable = guestExceptionTable;
-
-	// Set up the new guest's master stack
-	newGuest->MSP = (((uint32_t*)(newGuest->vectorTable))[0] - 8) & 0xfffffff8;
-	memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
-	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->vectorTable)[1];
-	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+	//newGuest->vectorTable = guestExceptionTable;
 	
 	newGuest->SCB = newSCB;
 	
@@ -225,8 +219,13 @@ int createGuest(void *guestExceptionTable){
 	newGuest->SCB->VTOR = guestExceptionTable;
 
 	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
-	
-	
+
+	// Set up the new guest's master stack
+	newGuest->MSP = (((uint32_t*)(newGuest->SCB->VTOR))[0] - 8) & 0xfffffff8;
+	memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
+	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->SCB->VTOR)[1];
+	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+
 	currGuest = guestList; // Point currGuest to first element in guestList
 }
 
@@ -256,7 +255,7 @@ void hvInit() {
  * exception handler associated with interruptNum, the exception number.
  */
 uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
-	return (uint32_t*)((uint32_t*)guest->vectorTable)[interruptNum]; // stub that returns function pointer to guest exception table.
+	return (uint32_t*)((uint32_t*)guest->SCB->VTOR)[interruptNum]; // stub that returns function pointer to guest exception table.
 }
 
 /*
@@ -845,7 +844,7 @@ void hermesResetHandler(){
 		*pDest++ = 0;
 	}
 
-	CORTEXM7_VTOR = ((uint32_t) hvVectorTable); // This should probably go in hvInit()
+	CORTEXM7_VTOR = ((uint32_t) hvVectorTable);
 
 	hvInit();
 	
@@ -856,8 +855,6 @@ void hermesResetHandler(){
 	// Switch to unpriv execution
 	__asm volatile
 	(
-//	"  mrs r0,psp\n"      // Get PSP in R0
-//	"  ldm r0!,{r1-r12,r14}\n" // Get saved regs off PSP
 	"  msr psp,%0\n" // Put the currGuest's MSP into the PSP
 	"  cpsie i\n" // Enable exceptions
 	"  mrs r0,control\n" // Set control register to put CPU in thread mode, switching to PSP
