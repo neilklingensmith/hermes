@@ -131,9 +131,6 @@ void *hvVectorTable[] __attribute__ ((aligned (128))) = {
 };
 
 
-
-
-
 /*
  * dummyfunc
  *
@@ -143,8 +140,6 @@ void *hvVectorTable[] __attribute__ ((aligned (128))) = {
  * instruction to be executed.
  *
  */
-
-
 void dummyfunc() __attribute__((naked));
 void dummyfunc()
 {
@@ -171,14 +166,14 @@ void dummyfunc()
 	);
 }
 
-
+/*
+ * listAdd
+ *
+ * Adds newElement to a linked list pointed to by list. When calling this function, pass the address of list head.
+ *
+ */
 int listAdd(struct listElement **head, struct listElement *newElement){
 	struct listElement *iterator = (struct listElement*)head ;
-
-	// Step through the list until iterator points to the last
-	// element in the list that is at a lower address than b.
-	//while(iterator->next != NULL && b > iterator->next)
-		//iterator = iterator->next ;
 
 	// Link element b into the list between iterator and iterator->next.
 	newElement->next = iterator->next ;
@@ -202,12 +197,7 @@ int createGuest(void *guestExceptionTable){
 	}
 
 	listAdd((struct listElement **)&guestList, (struct listElement *)newGuest);
-	//guestList = newGuest; // For now, we have only one guest
-	//currGuest = newGuest; // Normally this stuff would be dynamically allocated
 	newGuest->guest_regs = new_guest_regs;
-	
-	// Set up guest data structures.
-	//newGuest->vectorTable = guestExceptionTable;
 	
 	newGuest->SCB = newSCB;
 	
@@ -221,9 +211,9 @@ int createGuest(void *guestExceptionTable){
 	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
 
 	// Set up the new guest's master stack
-	newGuest->MSP = (((uint32_t*)(newGuest->SCB->VTOR))[0] - 8) & 0xfffffff8;
+	newGuest->MSP = (((uint32_t*)(newGuest->SCB->VTOR))[0] - 32) & 0xfffffff8;///////THIS LINE IS FUCKED UP. It's treating newGuest->SCB->VTOR as a char* not int*. Probably should change to -32 instead of -8
 	memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
-	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->SCB->VTOR)[1];
+	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->SCB->VTOR)[1] | 1;
 	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 
 	currGuest = guestList; // Point currGuest to first element in guestList
@@ -288,8 +278,9 @@ void genericHandler(){
 	"  ldr r0,[r0]\n"            // Point R0 to the currently executing guest
 	"  str r14,[r0,#24]\n"       // Store EXC_RETURN in the currGuest struct
 	);
-	//"  bl exceptionProcessor\n"
+	
 	exceptionProcessor();
+	
 	__asm volatile (
 	"  ldr r4,=currGuest\n"      // R4 <- currGuest->guest_regs
 	"  ldr r4,[r4]\n"
@@ -502,6 +493,44 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 	return 0;
 }
 
+int hvScheduler(uint32_t *psp){
+	
+	// Save the current guest's context.
+	if(GUEST_IN_MASTER_MODE(currGuest)){
+		currGuest->MSP = psp;
+	} else {
+		currGuest->PSP = psp;
+	}
+	
+	// Dumb scheduler. Cycle thru guests.
+	if(currGuest->next != NULL){
+		currGuest = currGuest->next;
+	} else {
+		currGuest = guestList;
+	}
+
+	// Install the new guest's PSP
+	if(GUEST_IN_MASTER_MODE(currGuest)){
+		__asm volatile(
+		"msr psp,%0\n"
+		:                            /* output */
+		:"r"(currGuest->MSP)         /* input */
+		:                            /* clobbered register */
+		);
+	} else {
+		__asm volatile(
+		"msr psp,%0\n"
+		:                            /* output */
+		:"r"(currGuest->PSP)         /* input */
+		:                            /* clobbered register */
+		);
+	}
+	asm("isb");
+	asm("dsb");
+
+	return 0;
+}
+
 /*
  * exceptionProcessor
  *
@@ -591,6 +620,14 @@ void exceptionProcessor() {
 				:"r"(currGuest->MSP)         /* input */
 				:                            /* clobbered register */
 				);
+				// Preserve registers that were clobbered by the exception handler
+				newStackFrame = currGuest->MSP;
+				currGuest->guest_regs[0] = newStackFrame[0];
+				currGuest->guest_regs[1] = newStackFrame[1];
+				currGuest->guest_regs[2] = newStackFrame[2];
+				currGuest->guest_regs[3] = newStackFrame[3];
+				currGuest->guest_regs[12] = newStackFrame[4];
+				currGuest->guest_regs[14] = newStackFrame[5];
 			}
 			break;
 		case 5: // BusFault
@@ -732,7 +769,7 @@ void exceptionProcessor() {
 			}
 			
 			memcpy(newStackFrame,psp,32);
-			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum); // find the guest's SVCall exception handler
+			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum) | 1; // find the guest's SVCall exception handler
 			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 			__asm volatile(
 			"msr psp,%0\n"
@@ -747,6 +784,17 @@ void exceptionProcessor() {
 		case 14: // PendSV
 			break;
 		case 15: // SysTick
+			hvScheduler(psp);
+			
+			// re-read the PSP since it might have been changed by the hvScheduler
+			__asm
+			(
+			"  mrs %0,psp\n"
+			: "=r" (psp)                /* output */
+			:                           /* input */
+			:                           /* clobbered register */
+			);
+			
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				newStackFrame = psp - 8;
 				newLR = 0xFFFFFFF1;
@@ -760,7 +808,7 @@ void exceptionProcessor() {
 			memcpy(newStackFrame,currGuest->guest_regs, 16);
 			newStackFrame[4] = currGuest->guest_regs[12];
 			newStackFrame[5] = newLR; // SHOULD BE currGuest->guest_regs[14]
-			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM); // Find the guest's PendSV handler
+			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM) | 1; // Find the guest's PendSV handler
 			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
 
@@ -814,7 +862,7 @@ void exceptionProcessor() {
 }
 
 
-/* Initialize segments */
+/* Initialize segments. These are defined in the linker script */
 extern uint32_t _sfixed;
 extern uint32_t _efixed;
 extern uint32_t _etext;
@@ -824,6 +872,20 @@ extern uint32_t _szero;
 extern uint32_t _ezero;
 extern uint32_t _sstack;
 extern uint32_t _estack;
+
+/*
+ * hermesResetHandler
+ *
+ * Reset handler for Hermes.
+ *
+ *    1. Initializes the .bss and data segments of memory
+ *
+ *    2. Initializes hypervisor with hvInit()
+ *
+ *    3. Creates guests. Calls to createGuest() must come after hvInit().
+ *
+ *    4. Starts running guests.
+ */
 void hermesResetHandler(){
 	extern void *exception_table;
 	extern void *dummyVectorTable[];
