@@ -231,7 +231,7 @@ void hvInit() {
 	guestList = NULL;
 	currGuest = NULL;
 	
-	SHCSR = (1<<18) | (1<<17) | (1<<16); // Enable bus, usage, and memmanage faults
+	CORTEXM7_SHCSR = (1<<18) | (1<<17) | (1<<16); // Enable bus, usage, and memmanage faults
 
 	//CORTEXM7_CCR &= ~((1<<16) | (1<<17)); // Disable instruction and data caches
 
@@ -430,8 +430,7 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 	if(instruction->mnemonic[0] == 'L'){
 		// Load from SCB
 		switch((uint32_t)ea){
-		case 0xe000ed04: // ICSR
-			// Loads from the ICSR.
+		case (uint32_t)&CORTEXM7_ICSR: // Loads from the ICSR.
 			// Different load instruction types use different register fields to specify
 			// the destination of the load, so check which one we're using and put the
 			// virtual ICSR value into that reg.
@@ -441,14 +440,19 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 				guest->guest_regs[instruction->Rt] = guest->SCB->ICSR;
 			}
 			return 0;
-		case 0xe000ed08: // VTOR
-			// Loads from the VTOR
+		case (uint32_t)&CORTEXM7_VTOR: // Loads from the VTOR
 			if(instruction->Rd != 0xff){
 				guest->guest_regs[instruction->Rd] = guest->SCB->VTOR;
 			} else if (instruction->Rt != 0xff) {
 				guest->guest_regs[instruction->Rt] = guest->SCB->VTOR;
 			}
 			return 0;
+		case (uint32_t)&CORTEXM7_SHCSR: // Loads from SHCSR
+			if(instruction->Rd != 0xff){
+				guest->guest_regs[instruction->Rd] = guest->SCB->SHCSR;
+			} else if (instruction->Rt != 0xff) {
+				guest->guest_regs[instruction->Rt] = guest->SCB->SHCSR;
+			}
 		default:
 			// Default action is to blindly execute privileged SCB access
 			break;
@@ -456,7 +460,7 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 	} else if (instruction->mnemonic[0] == 'S') {
 		// Store to SCB
 	switch((uint32_t)ea){
-		case 0xe000ed04: // ICSR
+		case (uint32_t)&CORTEXM7_ICSR: // Stores to the ICSR
 		// Different load instruction types use different register fields to specify
 		// the destination of the load, so check which one we're using and put the
 		// virtual ICSR value into that reg.
@@ -473,7 +477,7 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 			guest->SCB->ICSR &= ~(1<<28);
 		}
 		return 0;
-		case 0xe000ed08: // VTOR
+		case (uint32_t)&CORTEXM7_VTOR: // VTOR
 			// Different load instruction types use different register fields to specify
 			// the destination of the load, so check which one we're using and put the
 			// virtual ICSR value into that reg.
@@ -482,7 +486,14 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 			} else if (instruction->Rt != 0xff) {
 				guest->SCB->VTOR = guest->guest_regs[instruction->Rt];
 			}
-		return 0;
+			return 0;
+		case (uint32_t)&CORTEXM7_SHCSR: // SHCSR
+			if(instruction->Rd != 0xff){
+				guest->SCB->SHCSR = guest->guest_regs[instruction->Rd];
+				} else if (instruction->Rt != 0xff) {
+				guest->SCB->SHCSR = guest->guest_regs[instruction->Rt];
+			}
+			return 0;
 		default:
 		// Default action is to blindly execute privileged SCB access
 		break;
@@ -590,7 +601,9 @@ void exceptionProcessor() {
 			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
 
 //			if((*(psp+6) & 0xe) != 0) {
-			if((currGuest->guest_regs[14] & 0xe) != 0){
+//			if((currGuest->guest_regs[14] & 0xe) != 0){ // Handles exception returns via BX LR instrcution, assuming EXC_RETURN is in the LR
+			if(((uint32_t)guestPC & 0xe) != 0){ // Handles popping the PC off the stack and BX LR
+
 				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
 				SET_PROCESSOR_MODE_THREAD(currGuest);
 			
@@ -616,9 +629,10 @@ void exceptionProcessor() {
 				
 				__asm volatile(
 				"msr psp,%0\n"
-				:                            /* output */
-				:"r"(currGuest->MSP)         /* input */
-				:                            /* clobbered register */
+				"msr basepri,%1\n"
+				:                                             /* output */
+				:"r"(currGuest->MSP), "r"(currGuest->BASEPRI) /* input */
+				:                                             /* clobbered register */
 				);
 				// Preserve registers that were clobbered by the exception handler
 				newStackFrame = currGuest->MSP;
@@ -661,12 +675,14 @@ void exceptionProcessor() {
 
 				uint32_t *ea = (uint32_t*)effectiveAddress(&instruction,currGuest);
 				
+				// TODO: Should emulate NVIC here too
+				
 				// If this is a load/store to the SCB, then we have special code to emulate SCB accesses.
-				if(((instruction.type == THUMB_TYPE_LDSTREG) ||
+				if(((ea >= 0xe000ed00) && (ea < 0xe000ed40) || (ea == 0xe000e008)) &&
+				   ((instruction.type == THUMB_TYPE_LDSTREG) ||
 				   (instruction.type == THUMB_TYPE_LDSTWORDBYTE) ||
 				   (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
-				   (instruction.type == THUMB_TYPE_LDSTSINGLE)) &&
-				   ((ea >= 0xe000ed00) && (ea < 0xe000ed40) || (ea == 0xe000e008))){
+				   (instruction.type == THUMB_TYPE_LDSTSINGLE))){
 					emulateSCBAccess(currGuest, offendingInstruction, &instruction);
 				} else {
 					// If not a load/store to the SCB, then just blindly execute the instr.
@@ -698,9 +714,9 @@ void exceptionProcessor() {
 							// NOTE: IF THE GUEST THINKS IT'S IN MASTER MODE, SET THE PROCESSOR'S PSP TO POINT TO currGuest->MSP
 							if(GUEST_IN_MASTER_MODE(currGuest)){
 								currGuest->MSP = (uint32_t*)currGuest->guest_regs[instruction.Rn]; // Set the guest's MSP
-							
+
 								currGuest->MSP -= 32; // create an interrupt stack frame on the guest's MSP
-							
+
 								memcpy(temp_stack_frame,psp,32); // Copy old frame to temp buffer in case the stack frames overlap
 								memcpy(currGuest->MSP,temp_stack_frame,32); // Copy the interrupt stack frame from the hardware PSP to the guest's MSP.
 														
@@ -821,7 +837,38 @@ void exceptionProcessor() {
 			);
 			return;
 		default: // Higher-order interrupt numbers are chip-specific.
-			break;
+			// Un-pend the interrupt. Adapted from Atmel ASF core_cm7.h NVIC_ClearPendingIRQ()
+			//CORTEXM7_NVIC_ICPR((((uint32_t)(int32_t)(exceptionNum-15)) >> 5UL)) = (uint32_t)(1UL << (((uint32_t)(int32_t)(exceptionNum-15)) & 0x1FUL));
+			
+			if(GUEST_IN_MASTER_MODE(currGuest)){
+				newStackFrame = psp - 8;
+				newLR = 0xFFFFFFF1;
+			} else {
+				newStackFrame = currGuest->MSP - 8;
+				currGuest->PSP = psp;
+				newLR = 0xFFFFFFFD;
+			}
+
+			// Set up a stack frame so when we return from this exception we will return to the guest's SysTick handler
+			memcpy(newStackFrame,currGuest->guest_regs, 16);
+			newStackFrame[4] = currGuest->guest_regs[12];
+			newStackFrame[5] = newLR; // SHOULD BE currGuest->guest_regs[14]
+			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum) | 1; // Find the guest's PendSV handler
+			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
+
+			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
+
+			__asm volatile(
+			"msr psp,%0\n"
+			"mrs %1,basepri\n" // Save the guest's BASEPRI
+			"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
+			"msr basepri,r0\n"
+			:"=r"(currGuest->BASEPRI)   /* output */
+			:"r"(newStackFrame)         /* input */
+			:"r0"                       /* clobbered register */
+			);
+			return;
 	}
 
 	// Check to see if we have a PendSV exception pending on this guest.
@@ -910,10 +957,16 @@ void hermesResetHandler(){
 
 	hvInit();
 	
-	createGuest(&dummyVectorTable); // Init dummy guest
-
 	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
 
+	// Set configurable interrupts to low priority
+	pDest = 0xe000e400;
+	while(pDest < 0xe000e500){
+		*pDest = 0xffffffff;
+		pDest++;
+	}
+	
+	
 	// Switch to unpriv execution
 	__asm volatile
 	(

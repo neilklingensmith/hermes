@@ -48,7 +48,7 @@ struct scb {
 	uint32_t SHPR1;
 	uint32_t SHPR2;
 	uint32_t SHPR3;
-	uint32_t SHCRS;
+	uint32_t SHCSR;
 	uint32_t CFSR;
 	uint32_t HFSR;
 	uint32_t MMAR;
@@ -67,6 +67,7 @@ struct vm {
 	uint32_t EXC_RETURN;
 	uint32_t status;
 	uint32_t *guest_regs;
+	uint32_t BASEPRI;
 };
 
 /*
@@ -118,9 +119,11 @@ void hermesResetHandler();
 ///////////////////////////////////////////////
 // ARM Cortex Specific Regs
 
-#define SHCSR (*(uint32_t*)0xe000ed24)
-
+#define CORTEXM7_SHCSR (*(uint32_t*)0xe000ed24)
 #define CORTEXM7_VTOR  (*(uint32_t*)0xe000ed08)
+#define CORTEXM7_ICSR  (*(uint32_t*)0xe000ed04)
+
+#define CORTEXM7_NVIC_ICPR(a) (*(uint32_t*)(0xe000e280+(uint32_t)a))
 
 #define CFSR (*(uint32_t*)0xe000ed28)  // Configurable Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
 #define MMFSR (*(uint8_t*)0xe000ed28)  // Memory Management Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
