@@ -837,8 +837,6 @@ void exceptionProcessor() {
 			);
 			return;
 		default: // Higher-order interrupt numbers are chip-specific.
-			// Un-pend the interrupt. Adapted from Atmel ASF core_cm7.h NVIC_ClearPendingIRQ()
-			//CORTEXM7_NVIC_ICPR((((uint32_t)(int32_t)(exceptionNum-15)) >> 5UL)) = (uint32_t)(1UL << (((uint32_t)(int32_t)(exceptionNum-15)) & 0x1FUL));
 			
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				newStackFrame = psp - 8;
