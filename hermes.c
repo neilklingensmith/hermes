@@ -891,9 +891,8 @@ void exceptionProcessor() {
 								} else {
 								iterator->currRxBufWrite++;
 							}
-						} else {
-							iterator = iterator->next;
 						}
+						iterator = iterator->next;
 					}
 				}
 			}

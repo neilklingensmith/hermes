@@ -52,6 +52,8 @@ int createVirtualNetworkInterface(char *mac, struct rxBufDesc *rxBufDescList) {
 	if(mac == NULL){
 		memcpy(newIf->macAddress,baseMacAddress,6);
 		baseMacAddress[5]++;
+	} else {
+		memcpy(newIf->macAddress,mac,6);
 	}
 	
 	newIf->currRxBufWrite = rxBufDescList;
