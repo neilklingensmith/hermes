@@ -24,24 +24,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
-
+#include "chip.h"
 #include "hermes.h"
 #include "instdecode.h"
 #include <stdint.h>
 #include <string.h>
+#ifdef HERMES_ETHERNET_BRIDGE
+#include "gmacb_phy.h"
+#include "virt_eth.h"
+#endif
 
 char hvStack[HV_STACK_SIZE];
-
-//int **guestExceptionTable;
-
 char privexe[64]; // memory to hold code to execute privileged instructions.
-
 struct vm *guestList = NULL, *currGuest = NULL;
-//struct vm guests[1];
-//struct scb SCB[1];
-
 uint32_t guest_regs[15];
 
+#ifdef HERMES_ETHERNET_BRIDGE
+char eth_buf[ETH_BUF_SIZE+2];
+#endif
+
+#ifdef HERMES_ETHERNET_BRIDGE
+/* The GMAC driver instance */
+sGmacd gGmacd __attribute__ ((aligned (32)));
+/* The GMACB driver instance */
+GMacb gGmacb __attribute__ ((aligned (32)));
+
+#endif
+
+void *ramVectors[80]  __attribute__ ((aligned (128)));
 
 __attribute__ ((section(".vectors")))
 void *hvVectorTable[] __attribute__ ((aligned (128))) = {
@@ -199,21 +209,21 @@ int createGuest(void *guestExceptionTable){
 	listAdd((struct listElement **)&guestList, (struct listElement *)newGuest);
 	newGuest->guest_regs = new_guest_regs;
 	
-	newGuest->SCB = newSCB;
+	newGuest->virtualSCB = newSCB;
 	
 	// Initialize the SCB
 	memset(newSCB, 0, sizeof(struct scb));
-	newGuest->SCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
-	newGuest->SCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
-	newGuest->SCB->CCR = 0x00000200;   // Set CCR to reset value
-	newGuest->SCB->VTOR = guestExceptionTable;
+	newGuest->virtualSCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
+	newGuest->virtualSCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
+	newGuest->virtualSCB->CCR = 0x00000200;   // Set CCR to reset value
+	newGuest->virtualSCB->VTOR = guestExceptionTable;
 
 	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
 
 	// Set up the new guest's master stack
-	newGuest->MSP = (((uint32_t*)(newGuest->SCB->VTOR))[0] - 32) & 0xfffffff8;///////THIS LINE IS FUCKED UP. It's treating newGuest->SCB->VTOR as a char* not int*. Probably should change to -32 instead of -8
+	newGuest->MSP = (((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8;///////THIS LINE IS FUCKED UP. It's treating newGuest->SCB->VTOR as a char* not int*. Probably should change to -32 instead of -8
 	memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
-	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->SCB->VTOR)[1] | 1;
+	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->virtualSCB->VTOR)[1] | 1;
 	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 
 	currGuest = guestList; // Point currGuest to first element in guestList
@@ -245,7 +255,7 @@ void hvInit() {
  * exception handler associated with interruptNum, the exception number.
  */
 uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
-	return (uint32_t*)((uint32_t*)guest->SCB->VTOR)[interruptNum]; // stub that returns function pointer to guest exception table.
+	return (uint32_t*)((uint32_t*)guest->virtualSCB->VTOR)[interruptNum]; // stub that returns function pointer to guest exception table.
 }
 
 /*
@@ -259,6 +269,8 @@ uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
  */
 void genericHandler(){
 	// Save the guest registers into the guest registers array
+	
+	// TODO: Modify this assembly code to use inline gcc syntax so we don't have to hardcode struct member offsets
 	__asm volatile (
 	"  cpsid i\n"
 	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
@@ -435,23 +447,23 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 			// the destination of the load, so check which one we're using and put the
 			// virtual ICSR value into that reg.
 			if(instruction->Rd != 0xff){
-				guest->guest_regs[instruction->Rd] = guest->SCB->ICSR;
+				guest->guest_regs[instruction->Rd] = guest->virtualSCB->ICSR;
 			} else if (instruction->Rt != 0xff) {
-				guest->guest_regs[instruction->Rt] = guest->SCB->ICSR;
+				guest->guest_regs[instruction->Rt] = guest->virtualSCB->ICSR;
 			}
 			return 0;
 		case (uint32_t)&CORTEXM7_VTOR: // Loads from the VTOR
 			if(instruction->Rd != 0xff){
-				guest->guest_regs[instruction->Rd] = guest->SCB->VTOR;
+				guest->guest_regs[instruction->Rd] = guest->virtualSCB->VTOR;
 			} else if (instruction->Rt != 0xff) {
-				guest->guest_regs[instruction->Rt] = guest->SCB->VTOR;
+				guest->guest_regs[instruction->Rt] = guest->virtualSCB->VTOR;
 			}
 			return 0;
 		case (uint32_t)&CORTEXM7_SHCSR: // Loads from SHCSR
 			if(instruction->Rd != 0xff){
-				guest->guest_regs[instruction->Rd] = guest->SCB->SHCSR;
+				guest->guest_regs[instruction->Rd] = guest->virtualSCB->SHCSR;
 			} else if (instruction->Rt != 0xff) {
-				guest->guest_regs[instruction->Rt] = guest->SCB->SHCSR;
+				guest->guest_regs[instruction->Rt] = guest->virtualSCB->SHCSR;
 			}
 		default:
 			// Default action is to blindly execute privileged SCB access
@@ -470,11 +482,11 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 			icsrVal = guest->guest_regs[instruction->Rt];
 		}
 		if(icsrVal & (1<<28)){ // PendSV Set Bit
-			guest->SCB->ICSR |= (1<<28);
+			guest->virtualSCB->ICSR |= (1<<28);
 		}
 		
 		if(icsrVal & (1<<27)){ // PendSV Clear bit
-			guest->SCB->ICSR &= ~(1<<28);
+			guest->virtualSCB->ICSR &= ~(1<<28);
 		}
 		return 0;
 		case (uint32_t)&CORTEXM7_VTOR: // VTOR
@@ -482,16 +494,16 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 			// the destination of the load, so check which one we're using and put the
 			// virtual ICSR value into that reg.
 			if(instruction->Rd != 0xff){
-				guest->SCB->VTOR = guest->guest_regs[instruction->Rd];
+				guest->virtualSCB->VTOR = guest->guest_regs[instruction->Rd];
 			} else if (instruction->Rt != 0xff) {
-				guest->SCB->VTOR = guest->guest_regs[instruction->Rt];
+				guest->virtualSCB->VTOR = guest->guest_regs[instruction->Rt];
 			}
 			return 0;
 		case (uint32_t)&CORTEXM7_SHCSR: // SHCSR
 			if(instruction->Rd != 0xff){
-				guest->SCB->SHCSR = guest->guest_regs[instruction->Rd];
+				guest->virtualSCB->SHCSR = guest->guest_regs[instruction->Rd];
 				} else if (instruction->Rt != 0xff) {
-				guest->SCB->SHCSR = guest->guest_regs[instruction->Rt];
+				guest->virtualSCB->SHCSR = guest->guest_regs[instruction->Rt];
 			}
 			return 0;
 		default:
@@ -560,7 +572,7 @@ void exceptionProcessor() {
 	uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
 	struct inst instruction; // Instruction that caused the exception for bus faults and usage faults (emulated privileged instrs)
 	uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
-
+	uint32_t pkt_len = 0 ;
 	static int count = 0;
 
 	count++;
@@ -643,6 +655,7 @@ void exceptionProcessor() {
 				currGuest->guest_regs[12] = newStackFrame[4];
 				currGuest->guest_regs[14] = newStackFrame[5];
 			}
+			MMFSR = 0xff;
 			break;
 		case 5: // BusFault
 			busFaultStatus = BFSR;
@@ -836,6 +849,57 @@ void exceptionProcessor() {
 			:                           /* clobbered register */
 			);
 			return;
+			
+#ifdef HERMES_ETHERNET_BRIDGE
+		case SAME70_ETHERNET_ISR_NUM:
+			//GMACD_Handler_Hermes(&gGmacd,0);
+			GMACD_Handler(&gGmacd,0);
+			
+			pkt_len = 0;
+			while ( GMACD_OK == GMACD_Poll( &gGmacd, (uint8_t*)eth_buf, ETH_BUF_SIZE, &pkt_len, 0) )
+			{
+				// We Rx'd a frame. Process it.
+				extern struct virt_eth *ifList;
+				uint32_t *destMac = eth_buf;
+				struct virt_eth *iterator = ifList;
+				
+				if((*destMac == -1) && (*(uint32_t*)((uint32_t)destMac+2) == -1)){ // Broadcast frame
+					while(iterator != NULL){ // Loop thru all interfaces
+						if(iterator->currRxBufWrite->addr.bm.bOwnership == 0){ // Make sure ownership bit si clear so we can write
+							memcpy(iterator->currRxBufWrite->addr.bm.addrDW, eth_buf, pkt_len); // Copy frame data to Rx buffer
+							iterator->currRxBufWrite->length = pkt_len; // Copy length
+							iterator->currRxBufWrite->addr.bm.bOwnership = 1; // Set ownership bit to 1 to indicate that buffer contains new data
+						}
+						if(iterator->currRxBufWrite->addr.bm.bWrap == 1){ // Point currRxBuf to next element in the descriptor list.
+							iterator->currRxBufWrite = iterator->rxBufDescList;
+						} else {
+							iterator->currRxBufWrite++;
+						}
+						iterator = iterator->next;
+					}
+				} else { // Search interfaces for matching dest MAC
+					while(iterator != NULL){ // Loop thru all interfaces
+						// Compare MAC address of the interface to the packet's dest MAC
+						if((*destMac == (*(uint32_t*)((uint32_t)iterator->macAddress))) && (*(uint32_t*)((uint32_t)destMac+2) ==  (*(uint32_t*)((uint32_t)iterator->macAddress+2)))){
+							if(iterator->currRxBufWrite->addr.bm.bOwnership == 0){ // Make sure ownership bit si clear so we can write
+								memcpy(iterator->currRxBufWrite->addr.bm.addrDW, eth_buf, pkt_len); // Copy frame data to Rx buffer
+								iterator->currRxBufWrite->length = pkt_len; // Copy length
+								iterator->currRxBufWrite->addr.bm.bOwnership = 1; // Set ownership bit to 1 to indicate that buffer contains new data
+							}
+							if(iterator->currRxBufWrite->addr.bm.bWrap == 1){ // Point currRxBuf to next element in the descriptor list.
+								iterator->currRxBufWrite = iterator->rxBufDescList;
+								} else {
+								iterator->currRxBufWrite++;
+							}
+						} else {
+							iterator = iterator->next;
+						}
+					}
+				}
+			}
+			break;
+#endif
+
 		default: // Higher-order interrupt numbers are chip-specific.
 			
 			if(GUEST_IN_MASTER_MODE(currGuest)){
@@ -871,7 +935,7 @@ void exceptionProcessor() {
 
 	// Check to see if we have a PendSV exception pending on this guest.
 	// Make sure we are not already executing a PendSV exception handler.
-	if((currGuest->SCB->ICSR & (1<<28)) && !GUEST_IN_MASTER_MODE(currGuest)) {
+	if((currGuest->virtualSCB->ICSR & (1<<28)) && !GUEST_IN_MASTER_MODE(currGuest)) {
 		// re-read the PSP since it might have been changed by the MemManage handler
 		__asm
 		(
@@ -881,7 +945,7 @@ void exceptionProcessor() {
 		:                           /* clobbered register */
 		);
 		// Clear the PendSVSet bit in ICSR
-		currGuest->SCB->ICSR &= ~(1<<28);
+		currGuest->virtualSCB->ICSR &= ~(1<<28);
 
 		newStackFrame = currGuest->MSP - 8;
 		currGuest->PSP = psp;
@@ -950,8 +1014,18 @@ void hermesResetHandler(){
 	for (pDest = &_szero; pDest < &_ezero;) {
 		*pDest++ = 0;
 	}
+	
+	// Put the exception table into RAM so we can modify it if needed.
+	memcpy(ramVectors,hvVectorTable, sizeof(hvVectorTable));
 
-	CORTEXM7_VTOR = ((uint32_t) hvVectorTable);
+	//CORTEXM7_VTOR = ((uint32_t) hvVectorTable);
+	CORTEXM7_VTOR = ((uint32_t) ramVectors);
+	
+	LowLevelInit();
+	/* Initialize the C library */
+	__libc_init_array();
+	/* Disable watchdog */
+	WDT_Disable(WDT);
 
 	hvInit();
 	
@@ -963,8 +1037,28 @@ void hermesResetHandler(){
 		*pDest = 0xffffffff;
 		pDest++;
 	}
+
+	// Hardware init
+#ifdef HERMES_ETHERNET_BRIDGE
+	/* Configure systick for 1 ms. */
+	TimeTick_Configure();
 	
-	
+	// The Atmel ethernet driver uses the SysTick exception to time delays.
+	// Since we haven't started the HV yet, we can't use the HV's exception
+	// hooks to call Atmel's library SysTick Handler. Instead, we will
+	// temporarily put the library SysTick handler into the exception table and
+	// allow it to be called directly for purposes of driver initialization. We
+	// then replace the hypervisor's hook when we're done with the init.
+	ramVectors[15] = SysTick_Handler;
+
+	uint8_t macaddr[] = {0x3a, 0x1f, 0x34, 0x08, 0x54, 0x54};
+	gmac_tapdev_setmac((uint8_t *)macaddr);
+	gmac_tapdev_init_hermes();
+	CORTEXM7_SYST_CVR = 0; // Reset the system timer so we don't get a SysTick exception before we start the HV
+	ramVectors[15] = hvVectorTable[15];
+#endif
+
+
 	// Switch to unpriv execution
 	__asm volatile
 	(

@@ -35,6 +35,7 @@ SOFTWARE.
 
 
 #define HV_STACK_SIZE 4096
+#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
 
 // System control block for ARM Cortex M7 CPU
 struct scb {
@@ -60,7 +61,7 @@ struct vm {
 	struct vm *next;
 	struct vm *prev;
 
-	struct scb *SCB;
+	struct scb *virtualSCB;
 	uint32_t *PSP;
 	uint32_t *MSP;
 	uint32_t PSR;
@@ -83,7 +84,7 @@ void hvInit();
 void exceptionProcessor(void) ;
 void genericHandler() __attribute__((naked));
 void hermesResetHandler();
-
+int listAdd(struct listElement **head, struct listElement *newElement);
 
 
 #define __SYNCH__() asm("dsb sy\nisb sy\n")
@@ -123,6 +124,8 @@ void hermesResetHandler();
 #define CORTEXM7_VTOR  (*(uint32_t*)0xe000ed08)
 #define CORTEXM7_ICSR  (*(uint32_t*)0xe000ed04)
 
+#define CORTEXM7_SYST_CVR (*(uint32_t*)0xe000e018) // SysTick current value register
+
 #define CORTEXM7_NVIC_ICPR(a) (*(uint32_t*)(0xe000e280+(uint32_t)a))
 
 #define CFSR (*(uint32_t*)0xe000ed28)  // Configurable Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
@@ -152,5 +155,9 @@ void hermesResetHandler();
 #define ARM_CORTEX_M7_PENDSV_ISR_NUM          14
 #define ARM_CORTEX_M7_SYSTICK_ISR_NUM         15
 
+///////////////////////////////////////////////
+// SAME70 ISR numbers
+
+#define SAME70_ETHERNET_ISR_NUM       55
 
 #endif /* HV_H_ */
