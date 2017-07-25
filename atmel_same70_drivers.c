@@ -27,10 +27,10 @@ SOFTWARE.
 
 #include "board.h"
 
-#include "uip.h"
-#include "uip_arp.h"
+//#include "uip.h"
+//#include "uip_arp.h"
 #include "string.h"
-#include "gmac_tapdev.h"
+//#include "gmac_tapdev.h"
 /*----------------------------------------------------------------------------
  *        Definitions
  *----------------------------------------------------------------------------*/
@@ -54,29 +54,29 @@ SOFTWARE.
 static const Pin gmacPins[]   = {BOARD_GMAC_RUN_PINS};
 static const Pin gmacResetPin = BOARD_GMAC_RESET_PIN;
 
-extern sGmacd gGmacd __attribute__ ((aligned (32)));
-extern GMacb gGmacb __attribute__ ((aligned (32)));
+extern sGmacd gGmacd;
+extern GMacb gGmacb;
 
 /** TX descriptors list */
-__attribute__((__section__(".ram_nocache")))
-static sGmacTxDescriptor gTxDs[TX_BUFFERS] __attribute__ ((aligned (32))),  gDummyTxDs[DUMMY_SIZE] __attribute__ ((aligned (32)));
+//__attribute__((__section__(".ram_nocache")))
+sGmacTxDescriptor gTxDs[TX_BUFFERS] __attribute__ ((aligned (32))),  gDummyTxDs[DUMMY_SIZE] __attribute__ ((aligned (32)));
 
 /** RX descriptors list */
-static sGmacRxDescriptor gRxDs[RX_BUFFERS] __attribute__ ((aligned (32))), gDummyRxDs[DUMMY_SIZE] __attribute__ ((aligned (32)));
+sGmacRxDescriptor gRxDs[RX_BUFFERS] __attribute__ ((aligned (32))), gDummyRxDs[DUMMY_SIZE] __attribute__ ((aligned (32)));
 
 /** TX callbacks list */
-static fGmacdTransferCallback gTxCbs[TX_BUFFERS] __attribute__ ((aligned (32))), gDummyTxCbs[DUMMY_SIZE] __attribute__ ((aligned (32)));
+fGmacdTransferCallback gTxCbs[TX_BUFFERS] __attribute__ ((aligned (32))), gDummyTxCbs[DUMMY_SIZE] __attribute__ ((aligned (32)));
 /** Send Buffer */
 /* Section 3.6 of AMBA 2.0 spec states that burst should not cross 1K Boundaries.
    Receive buffer manager writes are burst of 2 words => 3 lsb bits of the address
    shall be set to 0 */
-static uint8_t pTxBuffer[TX_BUFFERS * BUFFER_SIZE] __attribute__ ((aligned (32))), pTxDummyBuffer[DUMMY_SIZE * DUMMY_BUFF_SIZE] __attribute__ ((aligned (32)));
+uint8_t pTxBuffer[TX_BUFFERS * BUFFER_SIZE] __attribute__ ((aligned (32))), pTxDummyBuffer[DUMMY_SIZE * DUMMY_BUFF_SIZE] __attribute__ ((aligned (32)));
 
 /** Receive Buffer */
-static uint8_t pRxBuffer[RX_BUFFERS * BUFFER_SIZE] __attribute__ ((aligned (32))), pRxDummyBuffer[DUMMY_SIZE * DUMMY_BUFF_SIZE] __attribute__ ((aligned (32)));
+uint8_t pRxBuffer[RX_BUFFERS * BUFFER_SIZE] __attribute__ ((aligned (32))), pRxDummyBuffer[DUMMY_SIZE * DUMMY_BUFF_SIZE] __attribute__ ((aligned (32)));
 
 /* MAC address used for demo */
-static uint8_t gGMacAddress[6] = {0x00, 0x45, 0x56, 0x78, 0x9a, 0xbc};
+uint8_t gGMacAddress[6] = {0x00, 0x45, 0x56, 0x78, 0x9a, 0xbc};
 
 
 

@@ -26,11 +26,12 @@ SOFTWARE.
 */
 #include "chip.h"
 #include "hermes.h"
+#include "nalloc.h"
 #include "instdecode.h"
 #include <stdint.h>
 #include <string.h>
 #ifdef HERMES_ETHERNET_BRIDGE
-#include "gmacb_phy.h"
+#include "include/gmacb_phy.h"
 #include "virt_eth.h"
 #endif
 
@@ -862,10 +863,10 @@ void exceptionProcessor() {
 				extern struct virt_eth *ifList;
 				uint32_t *destMac = eth_buf;
 				struct virt_eth *iterator = ifList;
-				
+
 				if((*destMac == -1) && (*(uint32_t*)((uint32_t)destMac+2) == -1)){ // Broadcast frame
 					while(iterator != NULL){ // Loop thru all interfaces
-						if(iterator->currRxBufWrite->addr.bm.bOwnership == 0){ // Make sure ownership bit si clear so we can write
+						if(iterator->currRxBufWrite->addr.bm.bOwnership == 0){ // Make sure ownership bit is clear so we can write
 							memcpy(iterator->currRxBufWrite->addr.bm.addrDW, eth_buf, pkt_len); // Copy frame data to Rx buffer
 							iterator->currRxBufWrite->length = pkt_len; // Copy length
 							iterator->currRxBufWrite->addr.bm.bOwnership = 1; // Set ownership bit to 1 to indicate that buffer contains new data
@@ -995,7 +996,7 @@ extern uint32_t _estack;
  *    4. Starts running guests.
  */
 void hermesResetHandler(){
-	extern void *exception_table;
+	extern void *exception_table_g1, *exception_table_g2;
 	extern void *dummyVectorTable[];
 	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
 
@@ -1028,7 +1029,8 @@ void hermesResetHandler(){
 
 	hvInit();
 	
-	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
+	createGuest(&exception_table_g1); // Init FreeRTOS Blinky demo guest
+	createGuest(&exception_table_g2); // Init FreeRTOS Blinky demo guest
 
 	// Set configurable interrupts to low priority
 	pDest = 0xe000e400;
@@ -1048,10 +1050,11 @@ void hermesResetHandler(){
 	// temporarily put the library SysTick handler into the exception table and
 	// allow it to be called directly for purposes of driver initialization. We
 	// then replace the hypervisor's hook when we're done with the init.
+	void SysTick_Handler(void);
 	ramVectors[15] = SysTick_Handler;
 
 	uint8_t macaddr[] = {0x3a, 0x1f, 0x34, 0x08, 0x54, 0x54};
-	gmac_tapdev_setmac((uint8_t *)macaddr);
+	//gmac_tapdev_setmac_g1((uint8_t *)macaddr);
 	gmac_tapdev_init_hermes();
 	CORTEXM7_SYST_CVR = 0; // Reset the system timer so we don't get a SysTick exception before we start the HV
 	ramVectors[15] = hvVectorTable[15];

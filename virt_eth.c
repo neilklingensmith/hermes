@@ -69,7 +69,13 @@ int createVirtualNetworkInterface(char *mac, struct rxBufDesc *rxBufDescList) {
 
 uint32_t virtEthRead(uint8_t *buffer, uint32_t len) {
 	struct virt_eth *iterator = ifList;
-	
+	uint32_t nbytes = 0;
+
+	// Disable Interrupts
+	asm("mov r0,0xff\n"
+	"msr basepri,r0\n"
+	"udf #0":::"r0");
+
 	// Find the virtual interface assoc'd with this guest
 	do{
 		if(iterator->guest == currGuest){
@@ -93,9 +99,13 @@ uint32_t virtEthRead(uint8_t *buffer, uint32_t len) {
 			iterator->currRxBufRead = iterator->rxBufDescList; // Wrap read pointer
 		}
 		
-		return len;
+		nbytes = len;
 	}
-	return 0;
+	// Enable interrupts
+	asm("mov r0,0\n"
+	"msr basepri,r0\n"
+	"udf #0":::"r0");
+	return nbytes;
 }
 
 
