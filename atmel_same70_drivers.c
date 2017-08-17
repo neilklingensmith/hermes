@@ -25,7 +25,7 @@ SOFTWARE.
 
 */
 
-#include "board.h"
+#include "libboard/board.h"
 
 //#include "uip.h"
 //#include "uip_arp.h"
@@ -136,17 +136,17 @@ void gmac_tapdev_init_hermes(void)
 	/* PHY initialize */
 	if (!GMACB_InitPhy(pGmacb, BOARD_MCK,  &gmacResetPin, 1,  gmacPins, PIO_LISTSIZE( gmacPins )))
 	{
-		printf( "P: PHY Initialize ERROR!\n\r" ) ;
+		//printf( "P: PHY Initialize ERROR!\n\r" ) ;
 		return;
 	}
 
 	/* Auto Negotiate, work in RMII mode */
 	if (!GMACB_AutoNegotiate(pGmacb))
 	{
-		printf( "P: Auto Negotiate ERROR!\n\r" ) ;
+		//printf( "P: Auto Negotiate ERROR!\n\r" ) ;
 		return;
 	}
 	
 	
-	printf( "P: Link detected \n\r" ) ;
+	//printf( "P: Link detected \n\r" ) ;
 }

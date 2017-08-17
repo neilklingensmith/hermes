@@ -24,16 +24,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
-#include "chip.h"
 #include "hermes.h"
+#ifdef HERMES_ETHERNET_BRIDGE
+#include "libboard/include/gmacb_phy.h"
+#endif
+#ifdef HERMES_ETHERNET_BRIDGE
+#include "virt_eth.h"
+#endif
+#include "libchip/chip.h"
 #include "nalloc.h"
 #include "instdecode.h"
 #include <stdint.h>
 #include <string.h>
-#ifdef HERMES_ETHERNET_BRIDGE
-#include "include/gmacb_phy.h"
-#include "virt_eth.h"
-#endif
 
 char hvStack[HV_STACK_SIZE];
 char privexe[64]; // memory to hold code to execute privileged instructions.
@@ -222,7 +224,7 @@ int createGuest(void *guestExceptionTable){
 	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
 
 	// Set up the new guest's master stack
-	newGuest->MSP = (((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8;///////THIS LINE IS FUCKED UP. It's treating newGuest->SCB->VTOR as a char* not int*. Probably should change to -32 instead of -8
+	newGuest->MSP = (((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8;
 	memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
 	((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->virtualSCB->VTOR)[1] | 1;
 	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
@@ -592,14 +594,14 @@ void exceptionProcessor() {
 	// Check if we got to hard fault because of escalation of a bus fault or a usage fault
 	// This can be caused by a usage fault or hard fault when PRIMASK = 1
 	if(exceptionNum == ARM_CORTEX_M7_HARDFAULT_ISR_NUM){
-		usageFaultStatus = UFSR;
-		busFaultStatus = BFSR;
+		usageFaultStatus = CORTEXM7_UFSR;
+		busFaultStatus = CORTEXM7_BFSR;
 		if(usageFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_USAGEFAULT_ISR_NUM;
 //		} else if ((busFaultStatus & 0x39) != 0){
 		} else if (busFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_BUSFAULT_ISR_NUM;
-		} else if ((MMFSR & 0x7f) != 0){
+		} else if ((CORTEXM7_MMFSR & 0x7f) != 0){
 			exceptionNum = ARM_CORTEX_M7_MEMMANAGEFAULT_ISR_NUM;
 		}
 	}
@@ -656,12 +658,12 @@ void exceptionProcessor() {
 				currGuest->guest_regs[12] = newStackFrame[4];
 				currGuest->guest_regs[14] = newStackFrame[5];
 			}
-			MMFSR = 0xff;
+			CORTEXM7_MMFSR = 0xff;
 			break;
 		case 5: // BusFault
-			busFaultStatus = BFSR;
-			//auxBusFaultStatus = ABFSR;
-			busFaultAddress = BFAR;
+			busFaultStatus = CORTEXM7_BFSR;
+			//auxBusFaultStatus = CORTEXM7_ABFSR;
+			busFaultAddress = CORTEXM7_BFAR;
 			
 			if((busFaultStatus & BFSR_IMPRECISEERR_MASK) != 0){ // Imprecise bus fault?
 				offendingInstruction = trackImpreciseBusFault(guestPC, busFaultAddress);
@@ -705,10 +707,10 @@ void exceptionProcessor() {
 			}
 			
 			// Clear the BFSR
-			BFSR = 0xff;
+			CORTEXM7_BFSR = 0xff;
 			break;
 		case 6: // UsageFault
-			usageFaultStatus = UFSR;
+			usageFaultStatus = CORTEXM7_UFSR;
 			
 			if(usageFaultStatus & 1){ // Check for illegal instruction
 				
@@ -783,7 +785,7 @@ void exceptionProcessor() {
 				}
 				while(1);
 			}
-			UFSR = 0xff; // Clear UFSR
+			CORTEXM7_UFSR = 0xff; // Clear UFSR
 			break;
 		case 7:	 // Reserved
 		case 8:
@@ -996,7 +998,7 @@ extern uint32_t _estack;
  *    4. Starts running guests.
  */
 void hermesResetHandler(){
-	extern void *exception_table_g1, *exception_table_g2;
+	extern void *exception_table, *exception_table_g2;
 	extern void *dummyVectorTable[];
 	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
 
@@ -1021,16 +1023,16 @@ void hermesResetHandler(){
 	//CORTEXM7_VTOR = ((uint32_t) hvVectorTable);
 	CORTEXM7_VTOR = ((uint32_t) ramVectors);
 	
-	LowLevelInit();
+	//LowLevelInit();
 	/* Initialize the C library */
 	__libc_init_array();
 	/* Disable watchdog */
-	WDT_Disable(WDT);
+	//WDT_Disable(WDT);
 
 	hvInit();
 	
-	createGuest(&exception_table_g1); // Init FreeRTOS Blinky demo guest
-	createGuest(&exception_table_g2); // Init FreeRTOS Blinky demo guest
+	createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
+	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
 
 	// Set configurable interrupts to low priority
 	pDest = 0xe000e400;
@@ -1042,7 +1044,7 @@ void hermesResetHandler(){
 	// Hardware init
 #ifdef HERMES_ETHERNET_BRIDGE
 	/* Configure systick for 1 ms. */
-	TimeTick_Configure();
+	//TimeTick_Configure();
 	
 	// The Atmel ethernet driver uses the SysTick exception to time delays.
 	// Since we haven't started the HV yet, we can't use the HV's exception
