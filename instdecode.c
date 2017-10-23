@@ -342,6 +342,9 @@ int instDecode(struct inst *instruction, uint16_t *location){
 			instruction->type = THUMB_TYPE_MSR;
 			instruction->Rn = (encoding32>>16) & 0xf;
 			instruction->imm = encoding32 & 0xff;
+		} else if ((encoding32 & THUMB_MASK32_NOP_HINTS) == THUMB_OPCODE32_NOP_HINTS){
+			instruction->type = THUMB_TYPE_NOP_HINTS;
+			instruction->imm = encoding32 & 0xff;
 		}
 
 	}else if ((encoding & THUMB_MASK_SHIFTIMM) == THUMB_OPCODE_SHIFTIMM){
