@@ -220,6 +220,8 @@ int createGuest(void *guestExceptionTable){
 	newGuest->virtualSCB->VTOR = guestExceptionTable;
 
 	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
+	
+	newGuest->isrlist = NULL;
 
 	// Set up the new guest's master stack
 	newGuest->MSP = (((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8;///////THIS LINE IS FUCKED UP. It's treating newGuest->SCB->VTOR as a char* not int*. Probably should change to -32 instead of -8
@@ -272,12 +274,13 @@ void genericHandler(){
 	// Save the guest registers into the guest registers array
 	
 	// TODO: Modify this assembly code to use inline gcc syntax so we don't have to hardcode struct member offsets
+	// NOTE: Tried to do this, but GCC keeps using R3 as a scratch register, overwriting the guest's R3.
 	__asm volatile (
 	"  cpsid i\n"
 	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
 	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r0,[r0]\n"
-	"  ldr r0,[r0,#32]\n"
+	"  ldr r0,[r0,#28]\n"
 	"  add r0,r0,#4\n"
 	
 	"  stm r0,{r1-r12}\n"        // Store guest registers
@@ -287,9 +290,6 @@ void genericHandler(){
 	"  str r2, [r0]\n"           // Put guest's R0 into guest_regs
 	"  ldr r2,[r1,#20]\n"        // Get the guest's LR off the exception stack frame
 	"  str r2,[r0,#56]\n"        // Put the guest's LR into guest_regs
-	"  ldr r0,=currGuest\n"      // Get a pointer to currGuest in r0
-	"  ldr r0,[r0]\n"            // Point R0 to the currently executing guest
-	"  str r14,[r0,#24]\n"       // Store EXC_RETURN in the currGuest struct
 	);
 	
 	exceptionProcessor();
@@ -297,7 +297,7 @@ void genericHandler(){
 	__asm volatile (
 	"  ldr r4,=currGuest\n"      // R4 <- currGuest->guest_regs
 	"  ldr r4,[r4]\n"
-	"  ldr r4,[r4,#32]\n"
+	"  ldr r4,[r4,#28]\n"
 	
 	"  mrs r5,psp\n"             // Point R5 to the PSP (exception stack frame)
 	"  ldm r4,{r0-r3}\n"         // Get r0-r3 from guest_regs
@@ -549,8 +549,8 @@ int hvScheduler(uint32_t *psp){
 		:                            /* clobbered register */
 		);
 	}
-	asm("isb");
-	asm("dsb");
+//	asm("isb");
+//	asm("dsb");
 
 	return 0;
 }
@@ -596,7 +596,6 @@ void exceptionProcessor() {
 		busFaultStatus = BFSR;
 		if(usageFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_USAGEFAULT_ISR_NUM;
-//		} else if ((busFaultStatus & 0x39) != 0){
 		} else if (busFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_BUSFAULT_ISR_NUM;
 		} else if ((MMFSR & 0x7f) != 0){
@@ -613,8 +612,6 @@ void exceptionProcessor() {
 
 			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
 
-//			if((*(psp+6) & 0xe) != 0) {
-//			if((currGuest->guest_regs[14] & 0xe) != 0){ // Handles exception returns via BX LR instrcution, assuming EXC_RETURN is in the LR
 			if(((uint32_t)guestPC & 0xe) != 0){ // Handles popping the PC off the stack and BX LR
 
 				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
@@ -773,14 +770,6 @@ void exceptionProcessor() {
 				// seem to be related to an MRS or CPS. We should probably
 				// invoke the guest's exception vector.
 			} else {
-				// Search RAM for 0x80000060
-				int *ptr =  0x20400000;
-				while(ptr < (0x20400000 + 0x60000)){
-					if(*ptr == 0x80000060){
-						while(1);
-					}
-					ptr++;
-				}
 				while(1);
 			}
 			UFSR = 0xff; // Clear UFSR
@@ -853,7 +842,6 @@ void exceptionProcessor() {
 			
 #ifdef HERMES_ETHERNET_BRIDGE
 		case SAME70_ETHERNET_ISR_NUM:
-			//GMACD_Handler_Hermes(&gGmacd,0);
 			GMACD_Handler(&gGmacd,0);
 			
 			pkt_len = 0;

@@ -57,6 +57,19 @@ struct scb {
 	uint32_t AFSR;
 };
 
+
+struct isr {
+	struct isr *next;
+	struct isr *prev;
+	
+	void (*func)(void);
+};
+
+/*
+ * struct vm
+ *
+ * This is the main data structure that keeps track of each guest's state
+ */
 struct vm {
 	struct vm *next;
 	struct vm *prev;
@@ -65,11 +78,14 @@ struct vm {
 	uint32_t *PSP;
 	uint32_t *MSP;
 	uint32_t PSR;
-	uint32_t EXC_RETURN;
 	uint32_t status;
 	uint32_t *guest_regs;
 	uint32_t BASEPRI;
+	struct isr *isrlist;
 };
+
+
+
 
 /*
  * Generic linked list element
