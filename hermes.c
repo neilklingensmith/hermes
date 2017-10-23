@@ -24,7 +24,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
-#include "chip.h"
+//#include "chip.h"
 #include "hermes.h"
 #include "nalloc.h"
 #include "instdecode.h"
@@ -158,7 +158,7 @@ void dummyfunc()
 	"  push {r1-r12,r14}\n"
 	"  ldr r1,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r1,[r1]\n"
-	"  ldr r1,[r1,#32]\n"
+	"  ldr r1,[r1,#28]\n"
 	"  ldm r1,{r0-r12,r14}\n"
 	"  nop\n"
 	"  nop\n"
@@ -166,7 +166,7 @@ void dummyfunc()
 
 	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r0,[r0]\n"
-	"  ldr r0,[r0,#32]\n"
+	"  ldr r0,[r0,#28]\n"
 	"  add r0,r0,#4\n"
 	"  stm r0,{r1-r12,r14}\n"  // Store guest registers
 	"  sub r0,r0,4\n"
@@ -984,7 +984,7 @@ extern uint32_t _estack;
  *    4. Starts running guests.
  */
 void hermesResetHandler(){
-	extern void *exception_table_g1, *exception_table_g2;
+	extern void *exception_table;
 	extern void *dummyVectorTable[];
 	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
 
@@ -1009,16 +1009,16 @@ void hermesResetHandler(){
 	//CORTEXM7_VTOR = ((uint32_t) hvVectorTable);
 	CORTEXM7_VTOR = ((uint32_t) ramVectors);
 	
-	LowLevelInit();
+	//LowLevelInit();
 	/* Initialize the C library */
-	__libc_init_array();
+	//__libc_init_array();
 	/* Disable watchdog */
-	WDT_Disable(WDT);
+	//WDT_Disable(WDT);
 
 	hvInit();
 	
-	createGuest(&exception_table_g1); // Init FreeRTOS Blinky demo guest
-	createGuest(&exception_table_g2); // Init FreeRTOS Blinky demo guest
+	createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
+	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
 
 	// Set configurable interrupts to low priority
 	pDest = 0xe000e400;
