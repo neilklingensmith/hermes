@@ -279,7 +279,11 @@ int instDecode(struct inst *instruction, uint16_t *location){
 			if((encoding & 7) == 2){ // Setting
 				strcat(instruction->mnemonic, "I");
 			}
+		} else if ((encoding & THUMB_MASK_MISC_NOP_HINT) == THUMB_OPCODE_MISC_NOP_HINT){
+			instruction->type = THUMB_TYPE_NOP_HINTS;
+			instruction->imm = (encoding>>4) & 0xf;
 		}
+		
 	}else if ((encoding & THUMB_MASK_LDSTM) == THUMB_OPCODE_LDSTM){
 		// Load/store multiple
 		instruction->type = THUMB_TYPE_LDSTM;

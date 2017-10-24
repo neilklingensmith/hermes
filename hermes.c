@@ -37,7 +37,7 @@ SOFTWARE.
 
 char hvStack[HV_STACK_SIZE];
 char privexe[64]; // memory to hold code to execute privileged instructions.
-struct vm *guestList = NULL, *currGuest = NULL;
+struct vm *guestList = NULL, *sleepingList = NULL, *currGuest = NULL;
 uint32_t guest_regs[15];
 
 #ifdef HERMES_ETHERNET_BRIDGE
@@ -196,6 +196,25 @@ int listAdd(struct listElement **head, struct listElement *newElement){
 		newElement->next->prev = newElement ;
 	}
 	return 0;
+}
+
+
+/*
+ * listRemove
+ *
+ * Deletes an element from a doubly linked list.
+ */
+void listRemove(struct listElement *element)
+{
+	if(element->next != NULL)
+		element->next->prev = element->prev ;
+	
+	element->prev->next = element->next ;
+
+	// NULLify the element's next and prev pointers to indicate
+	// that it is not linked into a list.
+	element->next = NULL ;
+	element->prev = NULL ;
 }
 
 int createGuest(void *guestExceptionTable){
@@ -428,6 +447,27 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 	return (uint16_t*)-1;
 }
 
+/*
+ * trackWFE
+ *
+ * Starting at the address offendingInstruction, trace back through the program
+ * trace sequentially in memory looking for MRS or MSR instructions. Return the
+ * address of the WFE/WFI instruction.
+ *
+ */
+uint16_t *trackWFE(uint16_t *offendingInstruction){
+	int i;
+	struct inst instruction;
+
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		if((instruction.type == THUMB_TYPE_NOP_HINTS) && ((instruction.imm == NOP_HINT_WAIT_FOR_EVENT) || (instruction.imm == NOP_HINT_WAIT_FOR_INTERRUPT))) {
+			return offendingInstruction-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
+
 
 /*
  * emulateSCBAccess
@@ -549,8 +589,6 @@ int hvScheduler(uint32_t *psp){
 		:                            /* clobbered register */
 		);
 	}
-//	asm("isb");
-//	asm("dsb");
 
 	return 0;
 }
@@ -765,6 +803,22 @@ void exceptionProcessor() {
 						break;
 					} // switch(instruction.imm)
 				}// if(offendingInstruction != -1)
+				
+				
+				offendingInstruction = trackWFE(guestPC-1);
+				// If the previous instruction was a wait for event or wait for interrupt, then the guest was trying to put the CPU to sleep. Un-schedule the guest and run the scheduler.
+				if(offendingInstruction != -1){
+	
+					struct vm *oldGuest = currGuest;
+					
+					hvScheduler(psp); // Run the scheduler to select a new guest
+					
+					// Remove the old guest from the active list and add it to the sleeping list.
+					listRemove(oldGuest);
+					listAdd((struct listElement **)&sleepingList, (struct listElement *)oldGuest);
+					
+				}
+				
 				///////////////////////////////////////////////////////////////
 				// NOTE: Here we have an undefined instruction that does not
 				// seem to be related to an MRS or CPS. We should probably

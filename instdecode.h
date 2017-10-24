@@ -50,6 +50,7 @@ SOFTWARE.
 #define THUMB_MASK_LDSTSTACK       0xF000 // 4 bit mask
 #define THUMB_MASK_ADDSPPC         0xF000 // 4 bit mask
 #define THUMB_MASK_MISC            0xF000 // 4 bit mask
+#define THUMB_MASK_MISC_NOP_HINT   0xFF0F
 #define THUMB_MASK_LDSTM           0xF000 // 4 bit mask
 #define THUMB_MASK_BRCOND          0xF000 // 4 bit mask
 #define THUMB_MASK_UNDEF           0xFF00 // 8 bit mask
@@ -84,6 +85,7 @@ SOFTWARE.
 #define THUMB_OPCODE_LDSTSTACK       0x9000
 #define THUMB_OPCODE_ADDSPPC         0xA000
 #define THUMB_OPCODE_MISC            0xB000
+#define THUMB_OPCODE_MISC_NOP_HINT   0xBF00
 #define THUMB_OPCODE_LDSTM           0xC000
 #define THUMB_OPCODE_BRCOND          0xD000
 #define THUMB_OPCODE_UNDEF           0xDE00
