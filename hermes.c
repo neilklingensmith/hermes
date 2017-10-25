@@ -357,6 +357,47 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
 	:  "r0"   /* clobbered register */);
 }
 
+
+/*
+ * placeExceptionOnGuestStack
+ *
+ * Sets up a guest's stack to jump to an exception on return from the genericHandler.
+ *
+ */
+int placeExceptionOnGuestStack(struct vm *guest, uint32_t *psp, uint32_t exceptionNum) {
+	uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
+	uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
+
+	if(GUEST_IN_MASTER_MODE(guest)){
+		newStackFrame = psp - 8;
+		newLR = 0xFFFFFFF1;
+	} else {
+		newStackFrame = guest->MSP - 8;
+		guest->PSP = psp;
+		newLR = 0xFFFFFFFD;
+	}
+
+	// Set up a stack frame so when we return from this exception we will return to the guest's SysTick handler
+	memcpy(newStackFrame,guest->guest_regs, 16);
+	newStackFrame[4] = guest->guest_regs[12];
+	newStackFrame[5] = newLR;
+	*(newStackFrame+6) = (uint32_t)locateGuestISR(guest,exceptionNum) | 1; // Find the guest's PendSV handler
+	newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+	guest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
+
+	SET_PROCESSOR_MODE_MASTER(guest); // Change to master mode since we're jumping to an exception processor
+	
+	__asm volatile(
+	"msr psp,%1\n"
+	"mrs %0,basepri\n" // Save the guest's BASEPRI
+	"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
+	"msr basepri,r0\n"
+	:"=r"(guest->BASEPRI)   /* output */
+	:"r"(newStackFrame)     /* input */
+	:"r0"                   /* clobbered register */
+	);
+}
+
 /*
  * trackImpreciseBusFault
  *
@@ -868,30 +909,8 @@ void exceptionProcessor() {
 			:                           /* clobbered register */
 			);
 			
-			if(GUEST_IN_MASTER_MODE(currGuest)){
-				newStackFrame = psp - 8;
-				newLR = 0xFFFFFFF1;
-			} else {
-				newStackFrame = currGuest->MSP - 8;
-				currGuest->PSP = psp;
-				newLR = 0xFFFFFFFD;
-			}
+			placeExceptionOnGuestStack(currGuest, psp, ARM_CORTEX_M7_SYSTICK_ISR_NUM);
 
-			// Set up a stack frame so when we return from this exception we will return to the guest's SysTick handler
-			memcpy(newStackFrame,currGuest->guest_regs, 16);
-			newStackFrame[4] = currGuest->guest_regs[12];
-			newStackFrame[5] = newLR; // SHOULD BE currGuest->guest_regs[14]
-			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM) | 1; // Find the guest's PendSV handler
-			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
-			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
-
-			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
-			__asm volatile(
-			"msr psp,%0\n"
-			:                           /* output */
-			:"r"(newStackFrame)         /* input */
-			:                           /* clobbered register */
-			);
 			return;
 			
 #ifdef HERMES_ETHERNET_BRIDGE
@@ -943,35 +962,8 @@ void exceptionProcessor() {
 #endif
 
 		default: // Higher-order interrupt numbers are chip-specific.
-			
-			if(GUEST_IN_MASTER_MODE(currGuest)){
-				newStackFrame = psp - 8;
-				newLR = 0xFFFFFFF1;
-			} else {
-				newStackFrame = currGuest->MSP - 8;
-				currGuest->PSP = psp;
-				newLR = 0xFFFFFFFD;
-			}
 
-			// Set up a stack frame so when we return from this exception we will return to the guest's SysTick handler
-			memcpy(newStackFrame,currGuest->guest_regs, 16);
-			newStackFrame[4] = currGuest->guest_regs[12];
-			newStackFrame[5] = newLR; // SHOULD BE currGuest->guest_regs[14]
-			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum) | 1; // Find the guest's PendSV handler
-			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
-			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
-
-			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
-
-			__asm volatile(
-			"msr psp,%0\n"
-			"mrs %1,basepri\n" // Save the guest's BASEPRI
-			"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
-			"msr basepri,r0\n"
-			:"=r"(currGuest->BASEPRI)   /* output */
-			:"r"(newStackFrame)         /* input */
-			:"r0"                       /* clobbered register */
-			);
+			placeExceptionOnGuestStack(currGuest, psp, exceptionNum);
 			return;
 	}
 
