@@ -125,9 +125,9 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 /*
  * VM Status - 32-bit Number 
  *
- *  31              24                                                                             0
+ *  31              24                                                                     1       0
  *  ----------------------------------------------------------------------------------------------------
- *  |    Exception   |                                                                          | MODE |
+ *  |    Exception   |                                                                | PRIMASK | MODE |
  *  ----------------------------------------------------------------------------------------------------
  *
  *  Exception - 8 Bits, currently active exception handler. 0 Indicates none
@@ -140,6 +140,10 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 #define STATUS_PROCESSOR_MODE_MASTER 1
 #define STATUS_PROCESSOR_MODE_THREAD 0
 
+#define STATUS_BIT_PRIMASK           1 // bit in the status word that tracks the VM's PRIMASK
+#define STATUS_MASK_PRIMASK          (1<<STATUS_BIT_PRIMASK)
+#define STATUS_PRIMASK               (1<<STATUS_BIT_PRIMASK)
+
 ///////////////////////////////////////////////////////////////
 // Macros
 
@@ -151,6 +155,11 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 #define GET_PROCESSOR_EXCEPTION(g) ((g->status >> 24) & 0xff)
 
 #define GUEST_IN_MASTER_MODE(a)      (a->status & STATUS_PROCESSOR_MODE_MASTER) // Macro to check if a guest is in master mode
+
+
+#define SET_PRIMASK(g)     (g->status |= STATUS_PRIMASK)
+#define CLEAR_PRIMASK(g)   (g->status &= ~STATUS_PRIMASK)
+#define GET_PRIMASK(g)     ((g->status & STATUS_MASK_PRIMASK)>>STATUS_BIT_PRIMASK)
 
 ///////////////////////////////////////////////
 // ARM Cortex Specific Regs

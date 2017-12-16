@@ -271,9 +271,9 @@ int instDecode(struct inst *instruction, uint16_t *location){
 			instruction->nbytes = 2;
 			
 			if((instruction->imm & 0x10) == 0){ // Check the immediate bit (enable)
-				strcpy(instruction->mnemonic, "CPSID ");
-			} else {
 				strcpy(instruction->mnemonic, "CPSIE ");
+			} else {
+				strcpy(instruction->mnemonic, "CPSID ");
 			}
 			
 			if((encoding & 7) == 2){ // Setting

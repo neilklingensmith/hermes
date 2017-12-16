@@ -499,6 +499,27 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 }
 
 /*
+ * trackCPS
+ *
+ * Starting at the address offendingInstruction, trace back through the program
+ * trace sequentially in memory looking for CPS instructions. Return the
+ * address of the CPS instruction.
+ *
+ */
+uint16_t *trackCPS(uint16_t *offendingInstruction){
+	int i;
+	struct inst instruction;
+
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		if((instruction.type == THUMB_TYPE_MISC_CPS)) {
+			return offendingInstruction-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
+
+/*
  * trackWFE
  *
  * Starting at the address offendingInstruction, trace back through the program
@@ -964,6 +985,34 @@ void exceptionProcessor() {
 						break;
 					} // switch(instruction.imm)
 				}// if(offendingInstruction != -1)
+
+				offendingInstruction = trackCPS(guestPC-1);
+				// If the previous instruction was a CPS, then update the VM's PRIMASK
+				if(offendingInstruction != -1){
+					instDecode(&instruction, offendingInstruction); // Decode the instruction
+					switch(instruction.mnemonic[4]){
+					case 'D': // Interrupt disable
+						SET_PRIMASK(currGuest);
+						// Disable interrupts for the guest by setting the BASEPRI to 0xff
+						__asm volatile(
+						"mov r0,0xff\n"
+						"msr basepri,r0\n"
+						:      // output
+						:      // input
+						:"r0"  // clobbered register
+						);
+						break;
+					case 'E': // Interrupt enable
+						CLEAR_PRIMASK(currGuest);
+						__asm volatile(
+						"msr basepri,%0\n"
+						:                                             /* output */
+						:"r"(currGuest->BASEPRI) /* input */
+						:                                             /* clobbered register */
+						);
+						break;
+					}
+				}
 
 				offendingInstruction = trackWFE(guestPC-1);
 				// If the previous instruction was a wait for event or wait for interrupt, then the guest was trying to put the CPU to sleep. Un-schedule the guest and run the scheduler.

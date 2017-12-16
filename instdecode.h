@@ -155,7 +155,7 @@ struct inst {
 	uint8_t Rt;
 	uint8_t nbytes;
 	uint8_t type;
-	char mnemonic[6];
+	char mnemonic[10];
 };
 
 
