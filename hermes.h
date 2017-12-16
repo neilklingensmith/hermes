@@ -65,6 +65,11 @@ struct scb {
 	uint32_t AFSR;
 };
 
+struct nvic {
+	uint32_t interrupt_enabled[8];
+	uint32_t interrupt_pending[8];
+	uint32_t interrupt_priority[60];
+};
 
 struct isr {
 	struct isr *next;
@@ -91,6 +96,7 @@ struct vm {
 	uint32_t BASEPRI;
 	struct isr *isrlist;
 	struct sysTick *virtualSysTick;
+	struct nvic *virtualNVIC;
 };
 
 
