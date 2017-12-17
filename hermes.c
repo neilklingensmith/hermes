@@ -986,6 +986,15 @@ void exceptionProcessor() {
 					} // switch(instruction.imm)
 				}// if(offendingInstruction != -1)
 
+				// CPS instructions
+				// When a guest executes a CPS instruction, we don't actually allow them to
+				// modify the PRIMASK state because that would allow them to enable/disable
+				// ALL interrupts systemwide, which effectively disable the hypervisor and
+				// hang the system. Instead, CPSIE instructions set the BASEPRI register to
+				// 0xff, which only disables interrupts with configurable priority. Usage
+				// fault, bus fault, etc. are still allowed to execute as normal when
+				// BASEPRI is set to 0xff, so the hypervisor can continue to work while the
+				// guest code is free from exceptions.
 				offendingInstruction = trackCPS(guestPC-1);
 				// If the previous instruction was a CPS, then update the VM's PRIMASK
 				if(offendingInstruction != -1){
