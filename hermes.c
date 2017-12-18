@@ -24,6 +24,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
+
+//#include "chip.h"
 #include "hermes.h"
 #ifdef HERMES_ETHERNET_BRIDGE
 #include "libboard/include/gmacb_phy.h"
@@ -39,7 +41,7 @@ SOFTWARE.
 
 char hvStack[HV_STACK_SIZE];
 char privexe[64]; // memory to hold code to execute privileged instructions.
-struct vm *guestList = NULL, *currGuest = NULL;
+struct vm *guestList = NULL, *sleepingList = NULL, *currGuest = NULL;
 uint32_t guest_regs[15];
 
 
@@ -167,7 +169,7 @@ void dummyfunc()
 	"  push {r1-r12,r14}\n"
 	"  ldr r1,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r1,[r1]\n"
-	"  ldr r1,[r1,#32]\n"
+	"  ldr r1,[r1,#28]\n"
 	"  ldm r1,{r0-r12,r14}\n"
 	"  nop\n"
 	"  nop\n"
@@ -175,7 +177,7 @@ void dummyfunc()
 
 	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r0,[r0]\n"
-	"  ldr r0,[r0,#32]\n"
+	"  ldr r0,[r0,#28]\n"
 	"  add r0,r0,#4\n"
 	"  stm r0,{r1-r12,r14}\n"  // Store guest registers
 	"  sub r0,r0,4\n"
@@ -207,28 +209,59 @@ int listAdd(struct listElement **head, struct listElement *newElement){
 	return 0;
 }
 
+
+/*
+ * listRemove
+ *
+ * Deletes an element from a doubly linked list.
+ */
+void listRemove(struct listElement *element)
+{
+	if(element->next != NULL)
+		element->next->prev = element->prev ;
+	
+	element->prev->next = element->next ;
+
+	// NULLify the element's next and prev pointers to indicate
+	// that it is not linked into a list.
+	element->next = NULL ;
+	element->prev = NULL ;
+}
+
 int createGuest(void *guestExceptionTable){
 	struct vm *newGuest = nalloc(sizeof(struct vm));
 	struct scb *newSCB = nalloc(sizeof(struct scb));
+	struct sysTick *newSysTick = nalloc(sizeof(struct sysTick));
+	struct nvic *newNVIC = nalloc(sizeof(struct nvic));
+	
 	uint32_t *new_guest_regs = nalloc(16*sizeof(uint32_t));
 	
-	if((uint32_t)newGuest == -1 || (uint32_t)newSCB == -1 || (uint32_t)new_guest_regs == -1){
+	if((uint32_t)newGuest == (uint32_t)-1 || (uint32_t)newSCB == (uint32_t)-1 || (uint32_t)new_guest_regs == (uint32_t)-1){
 		return -1;
 	}
 
 	listAdd((struct listElement **)&guestList, (struct listElement *)newGuest);
 	newGuest->guest_regs = new_guest_regs;
 	
-	newGuest->virtualSCB = newSCB;
-	
 	// Initialize the SCB
+	newGuest->virtualSCB = newSCB;
 	memset(newSCB, 0, sizeof(struct scb));
 	newGuest->virtualSCB->CPUID = 0x410FC270; // Set CPUID to ARM Cortex M7
 	newGuest->virtualSCB->AIRCR = 0xFA050000; // Set AIRCR to reset value
 	newGuest->virtualSCB->CCR = 0x00000200;   // Set CCR to reset value
-	newGuest->virtualSCB->VTOR = guestExceptionTable;
+	newGuest->virtualSCB->VTOR = (uint32_t)guestExceptionTable;
+
+	// Initialize the SysTick
+	newGuest->virtualSysTick = newSysTick;
+	memset(newSysTick, 0, sizeof(struct sysTick));
+	
+	// Initialize the NVIC
+	newGuest->virtualNVIC = newNVIC;
+	memset(newNVIC, 0, sizeof(struct nvic));
 
 	newGuest->status = STATUS_PROCESSOR_MODE_MASTER; // Start the guest in Master (handler) mode.
+	
+	newGuest->isrlist = NULL;
 
 	// Set up the new guest's master stack
 	newGuest->MSP = (((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8;
@@ -281,12 +314,13 @@ void genericHandler(){
 	// Save the guest registers into the guest registers array
 	
 	// TODO: Modify this assembly code to use inline gcc syntax so we don't have to hardcode struct member offsets
+	// NOTE: Tried to do this, but GCC keeps using R3 as a scratch register, overwriting the guest's R3.
 	__asm volatile (
 	"  cpsid i\n"
 	"  push {lr}\n"              // Preserve the LR, which stores the EXC_RETURN value.
 	"  ldr r0,=currGuest\n"      // Use R0 to point to the guest_regs array
 	"  ldr r0,[r0]\n"
-	"  ldr r0,[r0,#32]\n"
+	"  ldr r0,[r0,#28]\n"
 	"  add r0,r0,#4\n"
 	
 	"  stm r0,{r1-r12}\n"        // Store guest registers
@@ -296,9 +330,6 @@ void genericHandler(){
 	"  str r2, [r0]\n"           // Put guest's R0 into guest_regs
 	"  ldr r2,[r1,#20]\n"        // Get the guest's LR off the exception stack frame
 	"  str r2,[r0,#56]\n"        // Put the guest's LR into guest_regs
-	"  ldr r0,=currGuest\n"      // Get a pointer to currGuest in r0
-	"  ldr r0,[r0]\n"            // Point R0 to the currently executing guest
-	"  str r14,[r0,#24]\n"       // Store EXC_RETURN in the currGuest struct
 	);
 	
 	exceptionProcessor();
@@ -306,7 +337,7 @@ void genericHandler(){
 	__asm volatile (
 	"  ldr r4,=currGuest\n"      // R4 <- currGuest->guest_regs
 	"  ldr r4,[r4]\n"
-	"  ldr r4,[r4,#32]\n"
+	"  ldr r4,[r4,#28]\n"
 	
 	"  mrs r5,psp\n"             // Point R5 to the PSP (exception stack frame)
 	"  ldm r4,{r0-r3}\n"         // Get r0-r3 from guest_regs
@@ -347,6 +378,47 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
 	:         /* output */
 	:         /* input */
 	:  "r0"   /* clobbered register */);
+}
+
+
+/*
+ * placeExceptionOnGuestStack
+ *
+ * Sets up a guest's stack to jump to an exception on return from the genericHandler.
+ *
+ */
+int placeExceptionOnGuestStack(struct vm *guest, uint32_t *psp, uint32_t exceptionNum) {
+	uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
+	uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
+
+	if(GUEST_IN_MASTER_MODE(guest)){
+		newStackFrame = psp - 8;
+		guest->MSP = newStackFrame;
+		newLR = 0xFFFFFFF1;
+	} else {
+		newStackFrame = guest->MSP - 8;
+		guest->MSP = newStackFrame;
+		guest->PSP = psp;
+		newLR = 0xFFFFFFFD;
+	}
+
+	// Set up a stack frame so when we return from this exception we will return to the guest's SysTick handler
+	memcpy(newStackFrame,guest->guest_regs, 16);
+	newStackFrame[4] = guest->guest_regs[12];
+	newStackFrame[5] = newLR;
+	*(newStackFrame+6) = (uint32_t)locateGuestISR(guest,exceptionNum) | 1; // Find the guest's PendSV handler
+	newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
+	guest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
+
+	SET_PROCESSOR_MODE_MASTER(guest); // Change to master mode since we're jumping to an exception processor
+	SET_PROCESSOR_EXCEPTION(guest,exceptionNum);
+
+	__asm volatile(
+	"msr psp,%0\n"
+	:                    // Output
+	: "r"(newStackFrame) // Input
+	:                    // Clobbered
+	);
 }
 
 /*
@@ -439,6 +511,47 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
 	return (uint16_t*)-1;
 }
 
+/*
+ * trackCPS
+ *
+ * Starting at the address offendingInstruction, trace back through the program
+ * trace sequentially in memory looking for CPS instructions. Return the
+ * address of the CPS instruction.
+ *
+ */
+uint16_t *trackCPS(uint16_t *offendingInstruction){
+	int i;
+	struct inst instruction;
+
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		if((instruction.type == THUMB_TYPE_MISC_CPS)) {
+			return offendingInstruction-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
+
+/*
+ * trackWFE
+ *
+ * Starting at the address offendingInstruction, trace back through the program
+ * trace sequentially in memory looking for MRS or MSR instructions. Return the
+ * address of the WFE/WFI instruction.
+ *
+ */
+uint16_t *trackWFE(uint16_t *offendingInstruction){
+	int i;
+	struct inst instruction;
+
+	for(i = 0; i < 5 ; i++){
+		instDecode(&instruction, offendingInstruction-i);
+		if((instruction.type == THUMB_TYPE_NOP_HINTS) && ((instruction.imm == NOP_HINT_WAIT_FOR_EVENT) || (instruction.imm == NOP_HINT_WAIT_FOR_INTERRUPT))) {
+			return offendingInstruction-i;
+		}
+	}
+	return (uint16_t*)-1;
+}
 
 /*
  * emulateSCBAccess
@@ -528,6 +641,89 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 	return 0;
 }
 
+
+/*
+ * emulateSysTickAccess
+ *
+ * Emulate accesses to the SCB made by guest with instruction at location.
+ *
+ */
+int emulateSysTickAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
+	uint32_t *ea = effectiveAddress(instruction, guest);
+	if(instruction->mnemonic[0] == 'L'){
+	} else if(instruction->mnemonic[0] == 'S'){
+		uint32_t storeVal;
+		// Read the value to be stored from the decoded instruction.
+		if(instruction->Rd != 0xff){
+			storeVal = guest->guest_regs[instruction->Rd];
+		} else if (instruction->Rt != 0xff) {
+			storeVal = guest->guest_regs[instruction->Rt];
+		}
+		switch((uint32_t)ea){
+		case (uint32_t)&CORTEXM7_SYST_CSR:
+			guest->virtualSysTick->CSR = storeVal;
+			break;
+		case (uint32_t)&CORTEXM7_SYST_RVR:
+			storeVal = storeVal / 10000;
+			if(storeVal  == 0){
+				storeVal = 2;
+			}
+			guest->virtualSysTick->RVR = storeVal;
+			guest->virtualSysTick->CVR = storeVal; // Set up the CVR when we write to the RVR. This will start the counter.
+			break;
+		case (uint32_t)&CORTEXM7_SYST_CVR:
+			storeVal = storeVal / 10000;
+			if(storeVal  == 0){
+				storeVal = 2;
+			}
+			guest->virtualSysTick->CVR = storeVal;
+			break;
+		case (uint32_t)&CORTEXM7_SYST_CALIB:
+			guest->virtualSysTick->CALIB = storeVal;
+			break;
+		}
+	}
+	//executePrivilegedInstruction(location, instruction);
+	return 0;
+}
+
+/*
+ * emulateNVICAccess
+ *
+ * Emulate accesses to the NVIC made by guest with instruction at location. Our
+ * strategy is to record the state modified by all writes to the NVIC and then
+ * just let the instruction modify the actual hardware state. When this guest's
+ * context is later restored, the context we save here will be restored by
+ * updating the hardware registers.
+ *
+ */
+int emulateNVICAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
+	uint32_t *ea = effectiveAddress(instruction, guest);
+	if(instruction->mnemonic[0] == 'L'){
+	} else if(instruction->mnemonic[0] == 'S'){
+		if((ea >= 0xE000E100) && (ea <= 0xE000E11C)){ // ISER access
+		} else if ((ea >= 0xE000E180) && (ea <= 0xE000E19C)){ // ICER access
+		} else if ((ea >= 0xE000E200) && (ea <= 0xE000E21c)){ // ISPR access
+		} else if ((ea >= 0xE000E280) && (ea <= 0xE000E29c)){ // ICPR access
+		} else if ((ea >= 0xE000E300) && (ea <= 0xE000E31c)){ // IABR access
+		} else if ((ea >= 0xE000E400) && (ea <= 0xE000E4ef)){ // IPR access
+		}
+	}
+	executePrivilegedInstruction(location, instruction);
+}
+
+/*
+ * configureNVIC
+ *
+ * Configures the hardware NVIC according to the settings stored in the VM's
+ * virtual NVIC. Called in preparation to run a different guest (during a VM
+ * context switch).
+ *
+ */
+int configureNVIC(struct vm *guest){
+	
+}
+
 int hvScheduler(uint32_t *psp){
 	// Save the current guest's context.
 	if(GUEST_IN_MASTER_MODE(currGuest)){
@@ -554,14 +750,30 @@ int hvScheduler(uint32_t *psp){
 	} else {
 		__asm volatile(
 		"msr psp,%0\n"
-		:                            /* output */
-		:"r"(currGuest->PSP)         /* input */
-		:                            /* clobbered register */
+		:                            // output
+		:"r"(currGuest->PSP)         // input
+		:                            // clobbered register
 		);
 	}
-	asm("isb");
-	asm("dsb");
 
+	if(GET_PROCESSOR_EXCEPTION(currGuest) != 0){
+		__asm volatile(
+		"mrs %0,basepri\n" // Save the guest's BASEPRI
+		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
+		"msr basepri,r0\n"
+		:"=r"(currGuest->BASEPRI) // output
+		:                         // input
+		:"r0"                     // clobbered register
+		);
+	} else {
+		__asm volatile(
+		"msr basepri,%0\n"
+		:                        // output
+		:"r"(currGuest->BASEPRI) // input
+		:                        // clobbered
+		);
+	}
+	
 	return 0;
 }
 
@@ -606,7 +818,6 @@ void exceptionProcessor() {
 		busFaultStatus = CORTEXM7_BFSR;
 		if(usageFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_USAGEFAULT_ISR_NUM;
-//		} else if ((busFaultStatus & 0x39) != 0){
 		} else if (busFaultStatus != 0){
 			exceptionNum = ARM_CORTEX_M7_BUSFAULT_ISR_NUM;
 		} else if ((CORTEXM7_MMFSR & 0x7f) != 0){
@@ -622,9 +833,8 @@ void exceptionProcessor() {
 		case 4: // MemManage: Caused by bx lr instruction or similar trying to put EXEC_RETURN value into the PC
 
 			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
+			SET_PROCESSOR_EXCEPTION(currGuest,0); // Indicate that the guest has returned from the exception it was handling.
 
-//			if((*(psp+6) & 0xe) != 0) {
-//			if((currGuest->guest_regs[14] & 0xe) != 0){ // Handles exception returns via BX LR instrcution, assuming EXC_RETURN is in the LR
 			if(((uint32_t)guestPC & 0xe) != 0){ // Handles popping the PC off the stack and BX LR
 
 				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
@@ -632,9 +842,10 @@ void exceptionProcessor() {
 			
 				__asm volatile(
 				"msr psp,%0\n"
-				:                            /* output */
-				:"r"(currGuest->PSP)         /* input */
-				:                            /* clobbered register */
+				"msr basepri,%1\n"
+				:                                             /* output */
+				:"r"(currGuest->PSP), "r"(currGuest->BASEPRI) /* input */
+				:                                             /* clobbered register */
 				);
 
 				// Preserve registers that were clobbered by the exception handler
@@ -708,6 +919,14 @@ void exceptionProcessor() {
 				   (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
 				   (instruction.type == THUMB_TYPE_LDSTSINGLE))){
 					emulateSCBAccess(currGuest, offendingInstruction, &instruction);
+				} else if(((ea >= 0xE000E010) && (ea <= 0xE000E01C)) &&
+						  ((instruction.type == THUMB_TYPE_LDSTREG) ||
+						  (instruction.type == THUMB_TYPE_LDSTWORDBYTE) ||
+						  (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
+						  (instruction.type == THUMB_TYPE_LDSTSINGLE))){
+					emulateSysTickAccess(currGuest, offendingInstruction, &instruction);
+				} else if ( ((ea >= 0xe000e100) && (ea <= 0xe000e4ef)) || (ea == 0xe000ef00)) {
+					 emulateNVICAccess(currGuest, offendingInstruction, &instruction);
 				} else {
 					// If not a load/store to the SCB, then just blindly execute the instr.
  					executePrivilegedInstruction(offendingInstruction, &instruction);
@@ -796,19 +1015,60 @@ void exceptionProcessor() {
 						break;
 					} // switch(instruction.imm)
 				}// if(offendingInstruction != -1)
+
+				// CPS instructions
+				// When a guest executes a CPS instruction, we don't actually allow them to
+				// modify the PRIMASK state because that would allow them to enable/disable
+				// ALL interrupts systemwide, which effectively disable the hypervisor and
+				// hang the system. Instead, CPSIE instructions set the BASEPRI register to
+				// 0xff, which only disables interrupts with configurable priority. Usage
+				// fault, bus fault, etc. are still allowed to execute as normal when
+				// BASEPRI is set to 0xff, so the hypervisor can continue to work while the
+				// guest code is free from exceptions.
+				offendingInstruction = trackCPS(guestPC-1);
+				// If the previous instruction was a CPS, then update the VM's PRIMASK
+				if(offendingInstruction != -1){
+					instDecode(&instruction, offendingInstruction); // Decode the instruction
+					switch(instruction.mnemonic[4]){
+					case 'D': // Interrupt disable
+						SET_PRIMASK(currGuest);
+						// Disable interrupts for the guest by setting the BASEPRI to 0xff
+						__asm volatile(
+						"mov r0,0xff\n"
+						"msr basepri,r0\n"
+						:      // output
+						:      // input
+						:"r0"  // clobbered register
+						);
+						break;
+					case 'E': // Interrupt enable
+						CLEAR_PRIMASK(currGuest);
+						__asm volatile(
+						"msr basepri,%0\n"
+						:                                             /* output */
+						:"r"(currGuest->BASEPRI) /* input */
+						:                                             /* clobbered register */
+						);
+						break;
+					}
+				}
+
+				offendingInstruction = trackWFE(guestPC-1);
+				// If the previous instruction was a wait for event or wait for interrupt, then the guest was trying to put the CPU to sleep. Un-schedule the guest and run the scheduler.
+				if(offendingInstruction != -1){
+					struct vm *oldGuest = currGuest;
+					// Remove the old guest from the active list and add it to the sleeping list.
+					listRemove((struct listElement*)oldGuest);
+					listAdd((struct listElement **)&sleepingList, (struct listElement *)oldGuest);
+
+					hvScheduler(psp); // Run the scheduler to select a new guest
+				}
+				
 				///////////////////////////////////////////////////////////////
 				// NOTE: Here we have an undefined instruction that does not
 				// seem to be related to an MRS or CPS. We should probably
 				// invoke the guest's exception vector.
 			} else {
-				// Search RAM for 0x80000060
-				int *ptr =  0x20400000;
-				while(ptr < (0x20400000 + 0x60000)){
-					if(*ptr == 0x80000060){
-						while(1);
-					}
-					ptr++;
-				}
 				while(1);
 			}
 			CORTEXM7_UFSR = 0xff; // Clear UFSR
@@ -842,47 +1102,82 @@ void exceptionProcessor() {
 		case 14: // PendSV
 			break;
 		case 15: // SysTick
+
+			// Clear all the VMs off the sleeping list
+			do{
+				struct vm *sleepIterator = sleepingList;
+				struct vm* temp;
+				while(sleepIterator != NULL){
+					// If this guest's SysTick module is not enabled, then we will not modify its CVR
+					if(sleepIterator->virtualSysTick->CSR & 1 == 0){
+						sleepIterator = sleepIterator->next;
+						continue;
+					}
+					if(--sleepIterator->virtualSysTick->CVR <= 0){ // If decrementing the CVR makes it zero, then we need to create an exception for that guest and reschedule it.
+						sleepIterator->virtualSysTick->CVR = sleepIterator->virtualSysTick->RVR + 1; // Reload the current value register
+						// Set up the stack for this guest to take a SysTick exception.
+						placeExceptionOnGuestStack(sleepIterator,
+						                           GUEST_IN_MASTER_MODE(sleepIterator) ? sleepIterator->MSP : sleepIterator->PSP,
+												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
+						
+						temp = sleepIterator->next;
+						listRemove((struct listElement*)sleepIterator);
+						listAdd((struct listElement**)&guestList, (struct listElement*)sleepIterator);
+						sleepIterator = temp;
+					} else {
+						sleepIterator = sleepIterator->next;
+					}
+				}
+			}while(0);
+
+			do{
+				struct vm *guestIterator = guestList;
+				struct vm* temp;
+				while(guestIterator != NULL){
+					// If this guest's SysTick module is not enabled, then we will not modify its CVR
+					if((guestIterator->virtualSysTick->CSR & 1) == 0){
+						guestIterator = guestIterator->next;
+						continue;
+					}
+					if(--guestIterator->virtualSysTick->CVR <= 0){ // If decrementing the CVR makes it zero, then we need to create an exception for that guest and reschedule it.
+						guestIterator->virtualSysTick->CVR = guestIterator->virtualSysTick->RVR; // Reload the current value register
+						
+						// We need to preserve the PSP of the currGuest if we're going to set up an exception stack
+						// frame on it. This needs to be done before we set up the execption stack frame because
+						// that function forces the currGuest into master mode.
+						if((guestIterator == currGuest) && !GUEST_IN_MASTER_MODE(currGuest)){
+								currGuest->PSP = psp;
+						} else { /////////////////// BUG TRACKING ELSE BLOCK
+							uint32_t junk = psp;
+						}
+						
+						// Set up the stack for this guest to take a SysTick exception.
+						placeExceptionOnGuestStack(guestIterator,
+												   GUEST_IN_MASTER_MODE(guestIterator) ? guestIterator->MSP : guestIterator->PSP,
+												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
+						
+						// placeExceptionOnGuestStack is going to update the guest's stack pointer.
+						// If that guest is the currently active one (currGuest), then we need to
+						// update psp for when we call hvScheduler() below.
+						if(guestIterator == currGuest){
+							// Save the PSP if necessary
+							psp = guestIterator->MSP;
+						} else { ///////////////////////// BUG TRACKING ELSE BLOCK
+							uint32_t junk = psp;
+						}
+						guestIterator = guestIterator->next;
+					} else {
+						guestIterator = guestIterator->next;
+					}
+				}
+			}while(0);
+
 			hvScheduler(psp);
-			
-			// re-read the PSP since it might have been changed by the hvScheduler
-			__asm
-			(
-			"  mrs %0,psp\n"
-			: "=r" (psp)                /* output */
-			:                           /* input */
-			:                           /* clobbered register */
-			);
-			
-			if(GUEST_IN_MASTER_MODE(currGuest)){
-				newStackFrame = psp - 8;
-				newLR = 0xFFFFFFF1;
-			} else {
-				newStackFrame = currGuest->MSP - 8;
-				currGuest->PSP = psp;
-				newLR = 0xFFFFFFFD;
-			}
 
-			// Set up a stack frame so when we return from this exception we will return to the guest's SysTick handler
-			memcpy(newStackFrame,currGuest->guest_regs, 16);
-			newStackFrame[4] = currGuest->guest_regs[12];
-			newStackFrame[5] = newLR; // SHOULD BE currGuest->guest_regs[14]
-			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,ARM_CORTEX_M7_SYSTICK_ISR_NUM) | 1; // Find the guest's PendSV handler
-			newStackFrame[7] = (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
-			currGuest->guest_regs[14] = newLR; // put newLR into guest_regs, since the stack frame version will be overwritten by generic_handler before returning to the guest. Note: I think the guest's LR should be saved on its stack, so this should be ok.
-
-			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
-			__asm volatile(
-			"msr psp,%0\n"
-			:                           /* output */
-			:"r"(newStackFrame)         /* input */
-			:                           /* clobbered register */
-			);
 			return;
 			
 #ifdef HERMES_ETHERNET_BRIDGE
 		case SAME70_ETHERNET_ISR_NUM:
-			//GMACD_Handler_Hermes(&gGmacd,0);
-			
 			GMACD_Handler(&gGmacd,0);
 			
 			pkt_len = 0;
@@ -930,9 +1225,7 @@ void exceptionProcessor() {
 #endif
 
 		default: // Higher-order interrupt numbers are chip-specific.
-
-
-			
+		
 			// DEBUG ONLY!!
 			// LATENCY TESTING!!
 
@@ -999,15 +1292,7 @@ void exceptionProcessor() {
 
 			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 
-			__asm volatile(
-			"msr psp,%0\n"
-			"mrs %1,basepri\n" // Save the guest's BASEPRI
-			"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
-			"msr basepri,r0\n"
-			:"=r"(currGuest->BASEPRI)   /* output */
-			:"r"(newStackFrame)         /* input */
-			:"r0"                       /* clobbered register */
-			);
+			placeExceptionOnGuestStack(currGuest, psp, exceptionNum);
 			return;
 	}
 
@@ -1039,11 +1324,16 @@ void exceptionProcessor() {
 		currGuest->guest_regs[14] = 0xFFFFFFFD;
 		SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 		__asm volatile(
-		"msr psp,%0\n"
-		:                           /* output */
+		"msr psp,%1\n"
+		"mrs %0,basepri\n" // Save the guest's BASEPRI
+		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
+		"msr basepri,r0\n"
+		:"=r"(currGuest->BASEPRI)   /* output */
 		:"r"(newStackFrame)         /* input */
-		:                           /* clobbered register */
+		:"r0"                       /* clobbered register */
 		);
+
+
 	}
 	return;
 }
@@ -1101,7 +1391,7 @@ void hermesResetHandler(){
 	
 	//LowLevelInit();
 	/* Initialize the C library */
-	__libc_init_array();
+	//__libc_init_array();
 	/* Disable watchdog */
 	//WDT_Disable(WDT);
 
@@ -1141,6 +1431,10 @@ void hermesResetHandler(){
 
 SCB_EnableICache();
 //SCB_EnableDCache();
+
+	// Initialize SysTick Module
+	CORTEXM7_SYST_RVR = 10000;
+	CORTEXM7_SYST_CSR = 7;
 
 	// Switch to unpriv execution
 	__asm volatile

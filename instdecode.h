@@ -50,6 +50,7 @@ SOFTWARE.
 #define THUMB_MASK_LDSTSTACK       0xF000 // 4 bit mask
 #define THUMB_MASK_ADDSPPC         0xF000 // 4 bit mask
 #define THUMB_MASK_MISC            0xF000 // 4 bit mask
+#define THUMB_MASK_MISC_NOP_HINT   0xFF0F
 #define THUMB_MASK_LDSTM           0xF000 // 4 bit mask
 #define THUMB_MASK_BRCOND          0xF000 // 4 bit mask
 #define THUMB_MASK_UNDEF           0xFF00 // 8 bit mask
@@ -65,6 +66,7 @@ SOFTWARE.
 #define THUMB_MASK32_BRANCH        0xF8008000
 #define THUMB_MASK32_MRS           0xFFE0D000
 #define THUMB_MASK32_MSR           0xFFE0D000
+#define THUMB_MASK32_NOP_HINTS     0xFFF0D700
 #define THUMB_MASK_MISC_CPS        0xFFE0
 
 
@@ -83,6 +85,7 @@ SOFTWARE.
 #define THUMB_OPCODE_LDSTSTACK       0x9000
 #define THUMB_OPCODE_ADDSPPC         0xA000
 #define THUMB_OPCODE_MISC            0xB000
+#define THUMB_OPCODE_MISC_NOP_HINT   0xBF00
 #define THUMB_OPCODE_LDSTM           0xC000
 #define THUMB_OPCODE_BRCOND          0xD000
 #define THUMB_OPCODE_UNDEF           0xDE00
@@ -98,6 +101,7 @@ SOFTWARE.
 #define THUMB_OPCODE32_BRANCH        0xF0008000 // B
 #define THUMB_OPCODE32_MRS           0xF3E08000 // B
 #define THUMB_OPCODE32_MSR           0xF3808000 // B
+#define THUMB_OPCODE32_NOP_HINTS     0xF3A08000 // B
 #define THUMB_OPCODE_MISC_CPS        0xB660
 
 // Instruction type definitions
@@ -128,10 +132,20 @@ SOFTWARE.
 
 #define THUMB_TYPE_MISC_CPS        25
 
+#define THUMB_TYPE_NOP_HINTS       26 // See page 3-31 of Thumb2 Supplemental Ref Man
+
 // Register definitions for the MRS instruction
 #define MRS_REGISTER_MSP           8
 #define MRS_REGISTER_PSP           9
 #define MRS_REGISTER_BASEPRI       17
+
+// Hint definitions for NOP+Hints
+#define NOP_HINT_NOP                0
+#define NOP_HINT_YIELD              1
+#define NOP_HINT_WAIT_FOR_EVENT     2
+#define NOP_HINT_WAIT_FOR_INTERRUPT 3
+#define NOP_HINT_SEND_EVENT         4
+
 
 struct inst {
 	uint16_t imm;
@@ -141,7 +155,7 @@ struct inst {
 	uint8_t Rt;
 	uint8_t nbytes;
 	uint8_t type;
-	char mnemonic[6];
+	char mnemonic[10];
 };
 
 

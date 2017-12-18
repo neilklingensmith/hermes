@@ -272,15 +272,19 @@ int instDecode(struct inst *instruction, uint16_t *location){
 			instruction->nbytes = 2;
 			
 			if((instruction->imm & 0x10) == 0){ // Check the immediate bit (enable)
-				strcpy(instruction->mnemonic, "CPSID ");
-			} else {
 				strcpy(instruction->mnemonic, "CPSIE ");
+			} else {
+				strcpy(instruction->mnemonic, "CPSID ");
 			}
 			
 			if((encoding & 7) == 2){ // Setting
 				strcat(instruction->mnemonic, "I");
 			}
+		} else if ((encoding & THUMB_MASK_MISC_NOP_HINT) == THUMB_OPCODE_MISC_NOP_HINT){
+			instruction->type = THUMB_TYPE_NOP_HINTS;
+			instruction->imm = (encoding>>4) & 0xf;
 		}
+		
 	}else if ((encoding & THUMB_MASK_LDSTM) == THUMB_OPCODE_LDSTM){
 		// Load/store multiple
 		instruction->type = THUMB_TYPE_LDSTM;
@@ -342,6 +346,9 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		} else if ((encoding32 & THUMB_MASK32_MSR) == THUMB_OPCODE32_MSR){
 			instruction->type = THUMB_TYPE_MSR;
 			instruction->Rn = (encoding32>>16) & 0xf;
+			instruction->imm = encoding32 & 0xff;
+		} else if ((encoding32 & THUMB_MASK32_NOP_HINTS) == THUMB_OPCODE32_NOP_HINTS){
+			instruction->type = THUMB_TYPE_NOP_HINTS;
 			instruction->imm = encoding32 & 0xff;
 		}
 

@@ -35,7 +35,15 @@ SOFTWARE.
 
 
 #define HV_STACK_SIZE 4096
-#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+//#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+
+
+struct sysTick {
+	uint32_t CSR;
+	uint32_t RVR;
+	uint32_t CVR;
+	uint32_t CALIB;
+};
 
 // System control block for ARM Cortex M7 CPU
 struct scb {
@@ -57,6 +65,24 @@ struct scb {
 	uint32_t AFSR;
 };
 
+struct nvic {
+	uint32_t interrupt_enabled[8];
+	uint32_t interrupt_pending[8];
+	uint32_t interrupt_priority[60];
+};
+
+struct isr {
+	struct isr *next;
+	struct isr *prev;
+	
+	void (*func)(void);
+};
+
+/*
+ * struct vm
+ *
+ * This is the main data structure that keeps track of each guest's state
+ */
 struct vm {
 	struct vm *next;
 	struct vm *prev;
@@ -65,11 +91,16 @@ struct vm {
 	uint32_t *PSP;
 	uint32_t *MSP;
 	uint32_t PSR;
-	uint32_t EXC_RETURN;
 	uint32_t status;
 	uint32_t *guest_regs;
 	uint32_t BASEPRI;
+	struct isr *isrlist;
+	struct sysTick *virtualSysTick;
+	struct nvic *virtualNVIC;
 };
+
+
+
 
 /*
  * Generic linked list element
@@ -94,9 +125,9 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 /*
  * VM Status - 32-bit Number 
  *
- *  31              24                                                                             0
+ *  31              24                                                                     1       0
  *  ----------------------------------------------------------------------------------------------------
- *  |    Exception   |                                                                          | MODE |
+ *  |    Exception   |                                                                | PRIMASK | MODE |
  *  ----------------------------------------------------------------------------------------------------
  *
  *  Exception - 8 Bits, currently active exception handler. 0 Indicates none
@@ -109,6 +140,14 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 #define STATUS_PROCESSOR_MODE_MASTER 1
 #define STATUS_PROCESSOR_MODE_THREAD 0
 
+#define STATUS_BIT_PRIMASK           1 // bit in the status word that tracks the VM's PRIMASK
+#define STATUS_MASK_PRIMASK          (1<<STATUS_BIT_PRIMASK)
+#define STATUS_PRIMASK               (1<<STATUS_BIT_PRIMASK)
+
+///////////////////////////////////////////////////////////////
+// Macros
+
+
 #define SET_PROCESSOR_MODE_MASTER(g) (g->status |= STATUS_PROCESSOR_MODE_MASTER)   // Set guest g's execution mode to master
 #define SET_PROCESSOR_MODE_THREAD(g) (g->status &= ~STATUS_PROCESSOR_MODE_MASTER)  // Set guest g's execution mode to thread
 
@@ -117,14 +156,21 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 
 #define GUEST_IN_MASTER_MODE(a)      (a->status & STATUS_PROCESSOR_MODE_MASTER) // Macro to check if a guest is in master mode
 
+
+#define SET_PRIMASK(g)     (g->status |= STATUS_PRIMASK)
+#define CLEAR_PRIMASK(g)   (g->status &= ~STATUS_PRIMASK)
+#define GET_PRIMASK(g)     ((g->status & STATUS_MASK_PRIMASK)>>STATUS_BIT_PRIMASK)
+
 ///////////////////////////////////////////////
 // ARM Cortex Specific Regs
+///////////////////////////////////////////////
 
+
+///////////////////////////////
+// System Control Block Module
 #define CORTEXM7_SHCSR (*(uint32_t*)0xe000ed24)
 #define CORTEXM7_VTOR  (*(uint32_t*)0xe000ed08)
 #define CORTEXM7_ICSR  (*(uint32_t*)0xe000ed04)
-
-#define CORTEXM7_SYST_CVR (*(uint32_t*)0xe000e018) // SysTick current value register
 
 #define CORTEXM7_NVIC_ICPR(a) (*(uint32_t*)(0xe000e280+(uint32_t)a))
 
@@ -139,11 +185,24 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 
 #define CORTEXM7_CCR (*(uint32_t*)0xe000ed14)
 
+#define SCB_SHPR1 (*(uint32_t*)0xe000ed18) // System handler priority register 1, controls priority of UsageFault, BusFault, MemManage exceptions
+
+///////////////////////////////
+// SysTick Module
+
+#define CORTEXM7_SYST_CSR_ADDR   ((uint32_t)0xE000E010) // SysTick Control and Status Register
+#define CORTEXM7_SYST_RVR_ADDR   ((uint32_t)0xE000E014) // SysTick Reload Value Register
+#define CORTEXM7_SYST_CVR_ADDR   ((uint32_t)0xE000E018) // SysTick Current Value Register
+#define CORTEXM7_SYST_CALIB_ADDR ((uint32_t)0xE000E01C) // SysTick Calibration Register
+
+#define CORTEXM7_SYST_CSR   (*(uint32_t*)0xE000E010) // SysTick Control and Status Register
+#define CORTEXM7_SYST_RVR   (*(uint32_t*)0xE000E014) // SysTick Reload Value Register
+#define CORTEXM7_SYST_CVR   (*(uint32_t*)0xE000E018) // SysTick Current Value Register
+#define CORTEXM7_SYST_CALIB (*(uint32_t*)0xE000E01C) // SysTick Calibration Register
+
 
 #define BFSR_IMPRECISEERR_MASK 0x00000004
 #define BFSR_BFARVALID_MASK    0x00000080
-
-#define SCB_SHPR1 (*(uint32_t*)0xe000ed18) // System handler priority register 1, controls priority of UsageFault, BusFault, MemManage exceptions
 
 ///////////////////////////////////////////////
 // ARM Cortex ISR numbers
