@@ -42,6 +42,10 @@ char privexe[64]; // memory to hold code to execute privileged instructions.
 struct vm *guestList = NULL, *currGuest = NULL;
 uint32_t guest_regs[15];
 
+
+int putChar(uint32_t c); // for esp_printf
+
+
 #ifdef HERMES_ETHERNET_BRIDGE
 char eth_buf[ETH_BUF_SIZE+2];
 #endif
@@ -53,6 +57,9 @@ sGmacd gGmacd __attribute__ ((aligned (32)));
 GMacb gGmacb __attribute__ ((aligned (32)));
 
 #endif
+
+struct vm *dummyGuest; // LATENCY TESTING ONLY!!!
+
 
 void *ramVectors[80]  __attribute__ ((aligned (128)));
 
@@ -327,10 +334,12 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
 	*((uint32_t*)(privexe+14)) = 0xbf00bf00; // Set the target instructions in privexe to NOPs
 	
 	memcpy(privexe+14, (char*)offendingInstruction, instruction->nbytes);
+	SCB_InvalidateICache();
 	__asm volatile(
 	"  push {lr}\n"
-	"  isb sy\n"
-	"  dsb sy\n"
+	"  dsb\n"
+	"  isb\n"
+	"  dsb\n"
 	"  ldr r0,=privexe\n"
 	"  orr r0,r0,1\n" // Set the LSB to enable thumb execution mode
 	"  blx r0\n"
@@ -520,7 +529,6 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
 }
 
 int hvScheduler(uint32_t *psp){
-	
 	// Save the current guest's context.
 	if(GUEST_IN_MASTER_MODE(currGuest)){
 		currGuest->MSP = psp;
@@ -711,9 +719,26 @@ void exceptionProcessor() {
 			break;
 		case 6: // UsageFault
 			usageFaultStatus = CORTEXM7_UFSR;
-			
+
 			if(usageFaultStatus & 1){ // Check for illegal instruction
-				
+
+				// LATENCY TEST ONLY!!!!
+				instDecode(&instruction, guestPC); // Decode the instruction
+				if(instruction.imm == 1){
+					asm("ldr r0,=0xE0001004\n"
+					"ldr %0,[r0]\n"
+					: "=r"(currGuest->guest_regs[0])
+					:
+					: "r0");
+					*(psp+6) += 2;
+					CORTEXM7_UFSR = 0xff;
+					break;
+				}
+				// end latency testing
+					
+
+
+
 				// Point the guest's PC past the illegal instruction and continue executing.
 				*(psp+6) += 2;
 
@@ -761,6 +786,7 @@ void exceptionProcessor() {
 							:                     /* clobbered register */
 							);
 						} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
+							currGuest->BASEPRI = currGuest->guest_regs[instruction.Rn]; // Emulating BASEPRI
 							asm("msr basepri,%0\n"
 							:                     /* output */
 							: "r"(currGuest->guest_regs[instruction.Rn]) /* input */
@@ -856,6 +882,7 @@ void exceptionProcessor() {
 #ifdef HERMES_ETHERNET_BRIDGE
 		case SAME70_ETHERNET_ISR_NUM:
 			//GMACD_Handler_Hermes(&gGmacd,0);
+			
 			GMACD_Handler(&gGmacd,0);
 			
 			pkt_len = 0;
@@ -903,7 +930,56 @@ void exceptionProcessor() {
 #endif
 
 		default: // Higher-order interrupt numbers are chip-specific.
+
+
 			
+			// DEBUG ONLY!!
+			// LATENCY TESTING!!
+
+			// Save the current guest's context.
+			if(GUEST_IN_MASTER_MODE(currGuest)){
+				currGuest->MSP = psp;
+				} else {
+				currGuest->PSP = psp;
+			}
+			if(exceptionNum == 0x1e){
+				currGuest = dummyGuest;
+			}
+			// Install the new guest's PSP
+			if(GUEST_IN_MASTER_MODE(currGuest)){
+				__asm volatile(
+				"msr psp,%0\n"
+				:                            /* output */
+				:"r"(currGuest->MSP)         /* input */
+				:                            /* clobbered register */
+				);
+				} else {
+				__asm volatile(
+				"msr psp,%0\n"
+				:                            /* output */
+				:"r"(currGuest->PSP)         /* input */
+				:                            /* clobbered register */
+				);
+			}
+			// re-read the PSP since it might have been changed by changing the currGuest
+			__asm
+			(
+			"  mrs %0,psp\n"
+			: "=r" (psp)                /* output */
+			:                           /* input */
+			:                           /* clobbered register */
+			);
+/*
+			currGuest->BASEPRI = 0xff;
+			asm("mov r0,0xff\n"
+			    "msr basepri,r0\n":::"r0");
+*/
+			////////
+			// END DEBUG LATENCY TESTING
+
+
+
+
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				newStackFrame = psp - 8;
 				newLR = 0xFFFFFFF1;
@@ -1031,16 +1107,17 @@ void hermesResetHandler(){
 
 	hvInit();
 	
-	createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
+	dummyGuest = createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
 	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
 
 	// Set configurable interrupts to low priority
 	pDest = 0xe000e400;
 	while(pDest < 0xe000e500){
-		*pDest = 0xffffffff;
+		//*pDest = 0xffffffff;
+		*pDest = 0xc0c0c0c0;
 		pDest++;
 	}
-
+	((uint8_t*)0xe000e400)[14] = 0xff; // set uart interrupt to highest priority
 	// Hardware init
 #ifdef HERMES_ETHERNET_BRIDGE
 	/* Configure systick for 1 ms. */
@@ -1062,6 +1139,8 @@ void hermesResetHandler(){
 	ramVectors[15] = hvVectorTable[15];
 #endif
 
+SCB_EnableICache();
+//SCB_EnableDCache();
 
 	// Switch to unpriv execution
 	__asm volatile

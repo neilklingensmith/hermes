@@ -67,7 +67,8 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		}
 	}else if ((encoding & THUMB_MASK_UNDEF) == THUMB_OPCODE_UNDEF){
 		// Undefined instruction
-		instruction->type = THUMB_TYPE_BRANCH;
+		instruction->type = THUMB_TYPE_UNDEF;
+		instruction->imm = encoding & 0xff;
 	}else if ((encoding & THUMB_MASK_SYSCALL) == THUMB_OPCODE_SYSCALL){
 		// Syscall instruction
 		instruction->type = THUMB_TYPE_SYSCALL;
