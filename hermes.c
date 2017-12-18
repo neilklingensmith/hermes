@@ -1237,6 +1237,13 @@ void exceptionProcessor() {
 			}
 			if(exceptionNum == 0x1e){
 				currGuest = dummyGuest;
+		__asm volatile(
+		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
+		"msr basepri,r0\n"
+		:      // output
+		:      // input
+		:"r0"  // clobbered register
+		);
 			}
 			// Install the new guest's PSP
 			if(GUEST_IN_MASTER_MODE(currGuest)){
@@ -1433,7 +1440,7 @@ SCB_EnableICache();
 //SCB_EnableDCache();
 
 	// Initialize SysTick Module
-	CORTEXM7_SYST_RVR = 10000;
+	CORTEXM7_SYST_RVR = 300000;
 	CORTEXM7_SYST_CSR = 7;
 
 	// Switch to unpriv execution

@@ -35,7 +35,7 @@ SOFTWARE.
 
 
 #define HV_STACK_SIZE 4096
-//#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
 
 
 struct sysTick {
