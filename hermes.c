@@ -44,6 +44,7 @@ char privexe[64]; // memory to hold code to execute privileged instructions.
 struct vm *guestList = NULL, *sleepingList = NULL, *currGuest = NULL;
 uint32_t guest_regs[15];
 
+struct interrupt intlist[240];
 
 int putChar(uint32_t c); // for esp_printf
 
@@ -758,10 +759,10 @@ int hvScheduler(uint32_t *psp){
 
 	if(GET_PROCESSOR_EXCEPTION(currGuest) != 0){
 		__asm volatile(
-		"mrs %0,basepri\n" // Save the guest's BASEPRI
+//		"mrs %0,basepri\n" // Save the guest's BASEPRI
 		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
 		"msr basepri,r0\n"
-		:"=r"(currGuest->BASEPRI) // output
+		://"=r"(currGuest->BASEPRI) // output
 		:                         // input
 		:"r0"                     // clobbered register
 		);
@@ -1119,7 +1120,16 @@ void exceptionProcessor() {
 						placeExceptionOnGuestStack(sleepIterator,
 						                           GUEST_IN_MASTER_MODE(sleepIterator) ? sleepIterator->MSP : sleepIterator->PSP,
 												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
-						
+
+			__asm volatile(
+			"movs r0, 0xff\n"  // Disable interrupts during processing of the UART exception
+			"msr basepri,r0\n"
+			:      // output
+			:      // input
+			:"r0"  // clobbered register
+			);
+
+
 						temp = sleepIterator->next;
 						listRemove((struct listElement*)sleepIterator);
 						listAdd((struct listElement**)&guestList, (struct listElement*)sleepIterator);
@@ -1155,7 +1165,15 @@ void exceptionProcessor() {
 						placeExceptionOnGuestStack(guestIterator,
 												   GUEST_IN_MASTER_MODE(guestIterator) ? guestIterator->MSP : guestIterator->PSP,
 												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
-						
+
+			__asm volatile(
+			"movs r0, 0xff\n"  // Disable interrupts during processing of the UART exception
+			"msr basepri,r0\n"
+			:      // output
+			:      // input
+			:"r0"  // clobbered register
+			);
+
 						// placeExceptionOnGuestStack is going to update the guest's stack pointer.
 						// If that guest is the currently active one (currGuest), then we need to
 						// update psp for when we call hvScheduler() below.
@@ -1232,19 +1250,34 @@ void exceptionProcessor() {
 			// Save the current guest's context.
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				currGuest->MSP = psp;
-				} else {
+			} else {
 				currGuest->PSP = psp;
 			}
+
+			// Check if the exception is owned by a guest. Subtract 16 from exceptionNum because we don't store handler info for faults, which are the first 16 exceptions in the vector table.
+			// This is an alternative to the hardcoded method below as presented in HotMobile 18
+			if(intlist[exceptionNum-16].owner != NULL){
+				currGuest = intlist[exceptionNum-16].owner;
+				__asm volatile(
+				"msr basepri,%0\n"
+				:                            // output
+				: "r" (intlist[exceptionNum-16].priority) // input
+				:                            // clobbered register
+				);
+			}
+
+#if 0
 			if(exceptionNum == 0x1e){
 				currGuest = dummyGuest;
-		__asm volatile(
-		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
-		"msr basepri,r0\n"
-		:      // output
-		:      // input
-		:"r0"  // clobbered register
-		);
+				__asm volatile(
+				"movs r0, 0xff\n"  // Disable interrupts during processing of the UART exception
+				"msr basepri,r0\n"
+				:      // output
+				:      // input
+				:"r0"  // clobbered register
+				);
 			}
+#endif
 			// Install the new guest's PSP
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				__asm volatile(
@@ -1253,7 +1286,7 @@ void exceptionProcessor() {
 				:"r"(currGuest->MSP)         /* input */
 				:                            /* clobbered register */
 				);
-				} else {
+			} else {
 				__asm volatile(
 				"msr psp,%0\n"
 				:                            /* output */
@@ -1269,16 +1302,8 @@ void exceptionProcessor() {
 			:                           /* input */
 			:                           /* clobbered register */
 			);
-/*
-			currGuest->BASEPRI = 0xff;
-			asm("mov r0,0xff\n"
-			    "msr basepri,r0\n":::"r0");
-*/
 			////////
 			// END DEBUG LATENCY TESTING
-
-
-
 
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				newStackFrame = psp - 8;
@@ -1331,11 +1356,10 @@ void exceptionProcessor() {
 		currGuest->guest_regs[14] = 0xFFFFFFFD;
 		SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
 		__asm volatile(
-		"msr psp,%1\n"
-		"mrs %0,basepri\n" // Save the guest's BASEPRI
+		"msr psp,%0\n"
 		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
 		"msr basepri,r0\n"
-		:"=r"(currGuest->BASEPRI)   /* output */
+		://"=r"(currGuest->BASEPRI)   /* output */
 		:"r"(newStackFrame)         /* input */
 		:"r0"                       /* clobbered register */
 		);
@@ -1373,6 +1397,7 @@ extern uint32_t _estack;
 void hermesResetHandler(){
 	extern void *exception_table, *exception_table_g2;
 	extern void *dummyVectorTable[];
+	int i;
 	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
 
 	/* Initialize the relocate segment */
@@ -1414,6 +1439,16 @@ void hermesResetHandler(){
 		*pDest = 0xc0c0c0c0;
 		pDest++;
 	}
+	
+	for(i = 0; i < 240; i++){
+		intlist[i].owner = NULL;
+		intlist[i].priority = 0xc0;
+	}
+	
+	// Hardcode interrupt priorities for guest ownership of peripherals
+	intlist[14].owner = dummyGuest;
+	intlist[14].priority = 0xff;
+	
 	((uint8_t*)0xe000e400)[14] = 0xff; // set uart interrupt to highest priority
 	// Hardware init
 #ifdef HERMES_ETHERNET_BRIDGE
@@ -1440,7 +1475,7 @@ SCB_EnableICache();
 //SCB_EnableDCache();
 
 	// Initialize SysTick Module
-	CORTEXM7_SYST_RVR = 300000;
+	CORTEXM7_SYST_RVR = 100000;
 	CORTEXM7_SYST_CSR = 7;
 
 	// Switch to unpriv execution

@@ -71,6 +71,11 @@ struct nvic {
 	uint32_t interrupt_priority[60];
 };
 
+struct interrupt {
+	uint32_t priority;
+	struct vm *owner;
+};
+
 struct isr {
 	struct isr *next;
 	struct isr *prev;
