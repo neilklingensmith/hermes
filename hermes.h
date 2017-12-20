@@ -166,6 +166,14 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 #define CLEAR_PRIMASK(g)   (g->status &= ~STATUS_PRIMASK)
 #define GET_PRIMASK(g)     ((g->status & STATUS_MASK_PRIMASK)>>STATUS_BIT_PRIMASK)
 
+
+#define SET_CPU_BASEPRI(a)  __asm volatile( \
+                            "msr basepri,%0\n" \
+                            :          \
+                            :"r" (a)   \
+                            :          \
+                            );
+
 ///////////////////////////////////////////////
 // ARM Cortex Specific Regs
 ///////////////////////////////////////////////

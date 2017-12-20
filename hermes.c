@@ -767,12 +767,7 @@ int hvScheduler(uint32_t *psp){
 		:"r0"                     // clobbered register
 		);
 	} else {
-		__asm volatile(
-		"msr basepri,%0\n"
-		:                        // output
-		:"r"(currGuest->BASEPRI) // input
-		:                        // clobbered
-		);
+		SET_CPU_BASEPRI(currGuest->BASEPRI);
 	}
 	
 	return 0;
@@ -843,11 +838,11 @@ void exceptionProcessor() {
 			
 				__asm volatile(
 				"msr psp,%0\n"
-				"msr basepri,%1\n"
-				:                                             /* output */
-				:"r"(currGuest->PSP), "r"(currGuest->BASEPRI) /* input */
-				:                                             /* clobbered register */
+				:                                             // output
+				:"r"(currGuest->PSP) // input
+				:                                             // clobbered register
 				);
+				SET_CPU_BASEPRI(currGuest->BASEPRI);
 
 				// Preserve registers that were clobbered by the exception handler
 				newStackFrame = currGuest->PSP;
@@ -864,11 +859,13 @@ void exceptionProcessor() {
 				
 				__asm volatile(
 				"msr psp,%0\n"
-				"msr basepri,%1\n"
-				:                                             /* output */
-				:"r"(currGuest->MSP), "r"(currGuest->BASEPRI) /* input */
-				:                                             /* clobbered register */
+				:                    // output
+				:"r"(currGuest->MSP) // input
+				:                    // clobbered register
 				);
+				
+				SET_CPU_BASEPRI(currGuest->BASEPRI);
+				
 				// Preserve registers that were clobbered by the exception handler
 				newStackFrame = currGuest->MSP;
 				currGuest->guest_regs[0] = newStackFrame[0];
@@ -1007,11 +1004,7 @@ void exceptionProcessor() {
 							);
 						} else if((instruction.type == THUMB_TYPE_MSR) && GUEST_IN_MASTER_MODE(currGuest)){
 							currGuest->BASEPRI = currGuest->guest_regs[instruction.Rn]; // Emulating BASEPRI
-							asm("msr basepri,%0\n"
-							:                     /* output */
-							: "r"(currGuest->guest_regs[instruction.Rn]) /* input */
-							:                     /* clobbered register */
-							);
+							SET_CPU_BASEPRI(currGuest->guest_regs[instruction.Rn]);
 						}
 						break;
 					} // switch(instruction.imm)
@@ -1044,12 +1037,7 @@ void exceptionProcessor() {
 						break;
 					case 'E': // Interrupt enable
 						CLEAR_PRIMASK(currGuest);
-						__asm volatile(
-						"msr basepri,%0\n"
-						:                                             /* output */
-						:"r"(currGuest->BASEPRI) /* input */
-						:                                             /* clobbered register */
-						);
+						SET_CPU_BASEPRI(currGuest->BASEPRI);
 						break;
 					}
 				}
@@ -1258,26 +1246,9 @@ void exceptionProcessor() {
 			// This is an alternative to the hardcoded method below as presented in HotMobile 18
 			if(intlist[exceptionNum-16].owner != NULL){
 				currGuest = intlist[exceptionNum-16].owner;
-				__asm volatile(
-				"msr basepri,%0\n"
-				:                            // output
-				: "r" (intlist[exceptionNum-16].priority) // input
-				:                            // clobbered register
-				);
+				SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
 			}
 
-#if 0
-			if(exceptionNum == 0x1e){
-				currGuest = dummyGuest;
-				__asm volatile(
-				"movs r0, 0xff\n"  // Disable interrupts during processing of the UART exception
-				"msr basepri,r0\n"
-				:      // output
-				:      // input
-				:"r0"  // clobbered register
-				);
-			}
-#endif
 			// Install the new guest's PSP
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				__asm volatile(
