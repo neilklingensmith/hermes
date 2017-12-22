@@ -174,6 +174,14 @@ int listAdd(struct listElement **head, struct listElement *newElement);
                             :          \
                             );
 
+
+#define SET_CPU_PSP(a) __asm volatile( \
+                       "msr psp,%0\n" \
+                       :       \
+                       :"r"(a) \
+                       :       \
+                       );
+
 ///////////////////////////////////////////////
 // ARM Cortex Specific Regs
 ///////////////////////////////////////////////

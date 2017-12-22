@@ -414,12 +414,7 @@ int placeExceptionOnGuestStack(struct vm *guest, uint32_t *psp, uint32_t excepti
 	SET_PROCESSOR_MODE_MASTER(guest); // Change to master mode since we're jumping to an exception processor
 	SET_PROCESSOR_EXCEPTION(guest,exceptionNum);
 
-	__asm volatile(
-	"msr psp,%0\n"
-	:                    // Output
-	: "r"(newStackFrame) // Input
-	:                    // Clobbered
-	);
+	SET_CPU_PSP(newStackFrame);
 }
 
 /*
@@ -742,19 +737,9 @@ int hvScheduler(uint32_t *psp){
 
 	// Install the new guest's PSP
 	if(GUEST_IN_MASTER_MODE(currGuest)){
-		__asm volatile(
-		"msr psp,%0\n"
-		:                            /* output */
-		:"r"(currGuest->MSP)         /* input */
-		:                            /* clobbered register */
-		);
+		SET_CPU_PSP(currGuest->MSP);
 	} else {
-		__asm volatile(
-		"msr psp,%0\n"
-		:                            // output
-		:"r"(currGuest->PSP)         // input
-		:                            // clobbered register
-		);
+		SET_CPU_PSP(currGuest->PSP);
 	}
 
 	if(GET_PROCESSOR_EXCEPTION(currGuest) != 0){
@@ -836,12 +821,8 @@ void exceptionProcessor() {
 				// If EXEC_RETURN word has 0x9 or 0xD in the low order byte, then we're returning to thread mode
 				SET_PROCESSOR_MODE_THREAD(currGuest);
 			
-				__asm volatile(
-				"msr psp,%0\n"
-				:                                             // output
-				:"r"(currGuest->PSP) // input
-				:                                             // clobbered register
-				);
+				SET_CPU_PSP(currGuest->PSP);
+
 				SET_CPU_BASEPRI(currGuest->BASEPRI);
 
 				// Preserve registers that were clobbered by the exception handler
@@ -857,12 +838,7 @@ void exceptionProcessor() {
 				// Otherwise we're returning to master mode
 				SET_PROCESSOR_MODE_MASTER(currGuest);
 				
-				__asm volatile(
-				"msr psp,%0\n"
-				:                    // output
-				:"r"(currGuest->MSP) // input
-				:                    // clobbered register
-				);
+				SET_CPU_PSP(currGuest->MSP);
 				
 				SET_CPU_BASEPRI(currGuest->BASEPRI);
 				
@@ -979,11 +955,7 @@ void exceptionProcessor() {
 								memcpy(currGuest->MSP,temp_stack_frame,32); // Copy the interrupt stack frame from the hardware PSP to the guest's MSP.
 														
 								// Now put the requested new MSP into the hardware PSP, which is the actual stack pointer used by the guest.
-								asm("msr psp,%0"
-								:                     /* output */
-								: "r"(currGuest->MSP) /* input */
-								:                     /* clobbered register */
-								);
+								SET_CPU_PSP(currGuest->MSP);
 							}
 						}
 						break;
@@ -1078,12 +1050,7 @@ void exceptionProcessor() {
 			memcpy(newStackFrame,psp,32);
 			*(newStackFrame+6) = (uint32_t)locateGuestISR(currGuest,exceptionNum) | 1; // find the guest's SVCall exception handler
 			SET_PROCESSOR_MODE_MASTER(currGuest); // Change to master mode since we're jumping to an exception processor
-			__asm volatile(
-			"msr psp,%0\n"
-			:                            /* output */
-			:"r"(newStackFrame)         /* input */
-			:                            /* clobbered register */
-			);
+			SET_CPU_PSP(newStackFrame);
 			break;
 		case 12: // Reserved for debug
 		case 13: // Reserved
@@ -1251,19 +1218,9 @@ void exceptionProcessor() {
 
 			// Install the new guest's PSP
 			if(GUEST_IN_MASTER_MODE(currGuest)){
-				__asm volatile(
-				"msr psp,%0\n"
-				:                            /* output */
-				:"r"(currGuest->MSP)         /* input */
-				:                            /* clobbered register */
-				);
+				SET_CPU_PSP(currGuest->MSP);
 			} else {
-				__asm volatile(
-				"msr psp,%0\n"
-				:                            /* output */
-				:"r"(currGuest->PSP)         /* input */
-				:                            /* clobbered register */
-				);
+				SET_CPU_PSP(currGuest->PSP);
 			}
 			// re-read the PSP since it might have been changed by changing the currGuest
 			__asm
@@ -1442,7 +1399,7 @@ void hermesResetHandler(){
 	ramVectors[15] = hvVectorTable[15];
 #endif
 
-SCB_EnableICache();
+//SCB_EnableICache();
 //SCB_EnableDCache();
 
 	// Initialize SysTick Module
