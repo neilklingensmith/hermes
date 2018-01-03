@@ -35,7 +35,66 @@ SOFTWARE.
 
 
 #define HV_STACK_SIZE 4096
-#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+//#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+
+
+///////////////////////////////////////////////
+// ARM Cortex Specific Regs
+///////////////////////////////////////////////
+
+
+///////////////////////////////
+// System Control Block Module
+#define CORTEXM7_SHCSR (*(uint32_t*)0xe000ed24)
+#define CORTEXM7_VTOR  (*(uint32_t*)0xe000ed08)
+#define CORTEXM7_ICSR  (*(uint32_t*)0xe000ed04)
+
+#define CORTEXM7_NVIC_ICPR(a) (*(uint32_t*)(0xe000e280+(uint32_t)a))
+
+#define CORTEXM7_CFSR (*(uint32_t*)0xe000ed28)  // Configurable Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
+#define CORTEXM7_MMFSR (*(uint8_t*)0xe000ed28)  // Memory Management Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
+#define CORTEXM7_BFSR (*(uint8_t*)0xe000ed29)   // Bus Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
+#define CORTEXM7_UFSR (*(uint16_t*)0xe000ed2a)  // Usage Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
+
+#define CORTEXM7_BFAR (*(uint32_t*)0xe000ed38)  // Bus fault address register (Cortex M7 Peripherals > System Control Block)
+#define CORTEXM7_ABFSR (*(uint32_t*)0xe000efa8) // Aux bus fault status register (Cortex M7 Peripherals > Access Control)
+#define CORTEXM7_ACTLR (*(uint32_t*)0xe000e008)   // Auxiliary control register (Cortex M7 Peripherals > System Control Block)
+
+#define CORTEXM7_CCR (*(uint32_t*)0xe000ed14)
+
+#define SCB_SHPR1 (*(uint32_t*)0xe000ed18) // System handler priority register 1, controls priority of UsageFault, BusFault, MemManage exceptions
+
+///////////////////////////////
+// SysTick Module
+
+#define CORTEXM7_SYST_CSR_ADDR   ((uint32_t)0xE000E010) // SysTick Control and Status Register
+#define CORTEXM7_SYST_RVR_ADDR   ((uint32_t)0xE000E014) // SysTick Reload Value Register
+#define CORTEXM7_SYST_CVR_ADDR   ((uint32_t)0xE000E018) // SysTick Current Value Register
+#define CORTEXM7_SYST_CALIB_ADDR ((uint32_t)0xE000E01C) // SysTick Calibration Register
+
+#define CORTEXM7_SYST_CSR   (*(uint32_t*)0xE000E010) // SysTick Control and Status Register
+#define CORTEXM7_SYST_RVR   (*(uint32_t*)0xE000E014) // SysTick Reload Value Register
+#define CORTEXM7_SYST_CVR   (*(uint32_t*)0xE000E018) // SysTick Current Value Register
+#define CORTEXM7_SYST_CALIB (*(uint32_t*)0xE000E01C) // SysTick Calibration Register
+
+
+#define BFSR_IMPRECISEERR_MASK 0x00000004
+#define BFSR_BFARVALID_MASK    0x00000080
+
+///////////////////////////////////////////////
+// ARM Cortex ISR numbers
+
+#define ARM_CORTEX_M7_HARDFAULT_ISR_NUM       3
+#define ARM_CORTEX_M7_MEMMANAGEFAULT_ISR_NUM  4
+#define ARM_CORTEX_M7_BUSFAULT_ISR_NUM        5
+#define ARM_CORTEX_M7_USAGEFAULT_ISR_NUM      6
+#define ARM_CORTEX_M7_PENDSV_ISR_NUM          14
+#define ARM_CORTEX_M7_SYSTICK_ISR_NUM         15
+
+///////////////////////////////////////////////
+// SAME70 ISR numbers
+
+#define SAME70_ETHERNET_ISR_NUM       55
 
 
 struct sysTick {
@@ -182,62 +241,10 @@ int listAdd(struct listElement **head, struct listElement *newElement);
                        :       \
                        );
 
-///////////////////////////////////////////////
-// ARM Cortex Specific Regs
-///////////////////////////////////////////////
+
+#define SYSTICK_INTERRUPT_DISABLE() (CORTEXM7_SYST_CSR &= ~(1<<1))
+#define SYSTICK_INTERRUPT_ENABLE()  (CORTEXM7_SYST_CSR |= (1<<1))
 
 
-///////////////////////////////
-// System Control Block Module
-#define CORTEXM7_SHCSR (*(uint32_t*)0xe000ed24)
-#define CORTEXM7_VTOR  (*(uint32_t*)0xe000ed08)
-#define CORTEXM7_ICSR  (*(uint32_t*)0xe000ed04)
-
-#define CORTEXM7_NVIC_ICPR(a) (*(uint32_t*)(0xe000e280+(uint32_t)a))
-
-#define CORTEXM7_CFSR (*(uint32_t*)0xe000ed28)  // Configurable Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
-#define CORTEXM7_MMFSR (*(uint8_t*)0xe000ed28)  // Memory Management Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
-#define CORTEXM7_BFSR (*(uint8_t*)0xe000ed29)   // Bus Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
-#define CORTEXM7_UFSR (*(uint16_t*)0xe000ed2a)  // Usage Fault Status Register (Cortex M7 Peripherals > System Control Block > Configurable Fault Status Register)
-
-#define CORTEXM7_BFAR (*(uint32_t*)0xe000ed38)  // Bus fault address register (Cortex M7 Peripherals > System Control Block)
-#define CORTEXM7_ABFSR (*(uint32_t*)0xe000efa8) // Aux bus fault status register (Cortex M7 Peripherals > Access Control)
-#define CORTEXM7_ACTLR (*(uint32_t*)0xe000e008)   // Auxiliary control register (Cortex M7 Peripherals > System Control Block)
-
-#define CORTEXM7_CCR (*(uint32_t*)0xe000ed14)
-
-#define SCB_SHPR1 (*(uint32_t*)0xe000ed18) // System handler priority register 1, controls priority of UsageFault, BusFault, MemManage exceptions
-
-///////////////////////////////
-// SysTick Module
-
-#define CORTEXM7_SYST_CSR_ADDR   ((uint32_t)0xE000E010) // SysTick Control and Status Register
-#define CORTEXM7_SYST_RVR_ADDR   ((uint32_t)0xE000E014) // SysTick Reload Value Register
-#define CORTEXM7_SYST_CVR_ADDR   ((uint32_t)0xE000E018) // SysTick Current Value Register
-#define CORTEXM7_SYST_CALIB_ADDR ((uint32_t)0xE000E01C) // SysTick Calibration Register
-
-#define CORTEXM7_SYST_CSR   (*(uint32_t*)0xE000E010) // SysTick Control and Status Register
-#define CORTEXM7_SYST_RVR   (*(uint32_t*)0xE000E014) // SysTick Reload Value Register
-#define CORTEXM7_SYST_CVR   (*(uint32_t*)0xE000E018) // SysTick Current Value Register
-#define CORTEXM7_SYST_CALIB (*(uint32_t*)0xE000E01C) // SysTick Calibration Register
-
-
-#define BFSR_IMPRECISEERR_MASK 0x00000004
-#define BFSR_BFARVALID_MASK    0x00000080
-
-///////////////////////////////////////////////
-// ARM Cortex ISR numbers
-
-#define ARM_CORTEX_M7_HARDFAULT_ISR_NUM       3
-#define ARM_CORTEX_M7_MEMMANAGEFAULT_ISR_NUM  4
-#define ARM_CORTEX_M7_BUSFAULT_ISR_NUM        5
-#define ARM_CORTEX_M7_USAGEFAULT_ISR_NUM      6
-#define ARM_CORTEX_M7_PENDSV_ISR_NUM          14
-#define ARM_CORTEX_M7_SYSTICK_ISR_NUM         15
-
-///////////////////////////////////////////////
-// SAME70 ISR numbers
-
-#define SAME70_ETHERNET_ISR_NUM       55
 
 #endif /* HV_H_ */

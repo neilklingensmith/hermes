@@ -33,7 +33,7 @@ SOFTWARE.
 #ifdef HERMES_ETHERNET_BRIDGE
 #include "virt_eth.h"
 #endif
-#include "libchip/chip.h"
+#include "chip.h"
 #include "nalloc.h"
 #include "instdecode.h"
 #include <stdint.h>
@@ -61,7 +61,7 @@ GMacb gGmacb __attribute__ ((aligned (32)));
 
 #endif
 
-struct vm *dummyGuest; // LATENCY TESTING ONLY!!!
+struct vm *mmcguest; // LATENCY TESTING ONLY!!!
 
 
 void *ramVectors[80]  __attribute__ ((aligned (128)));
@@ -814,6 +814,15 @@ void exceptionProcessor() {
 		case 4: // MemManage: Caused by bx lr instruction or similar trying to put EXEC_RETURN value into the PC
 
 			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
+			
+
+			// TEST: Re-enable interrupt source that was disabled in the default switch case
+			if(GET_PROCESSOR_EXCEPTION(currGuest) >= 16){
+				uint32_t *ISER = 0xe000e100;
+				ISER[(GET_PROCESSOR_EXCEPTION(currGuest)-16)/32] |= (1<<((GET_PROCESSOR_EXCEPTION(currGuest)-16)%32));
+			}
+			SYSTICK_INTERRUPT_ENABLE();
+
 			SET_PROCESSOR_EXCEPTION(currGuest,0); // Indicate that the guest has returned from the exception it was handling.
 
 			if(((uint32_t)guestPC & 0xe) != 0){ // Handles popping the PC off the stack and BX LR
@@ -1076,13 +1085,7 @@ void exceptionProcessor() {
 						                           GUEST_IN_MASTER_MODE(sleepIterator) ? sleepIterator->MSP : sleepIterator->PSP,
 												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
 
-			__asm volatile(
-			"movs r0, 0xff\n"  // Disable interrupts during processing of the UART exception
-			"msr basepri,r0\n"
-			:      // output
-			:      // input
-			:"r0"  // clobbered register
-			);
+						SET_CPU_BASEPRI(0x01);
 
 
 						temp = sleepIterator->next;
@@ -1111,9 +1114,9 @@ void exceptionProcessor() {
 						// frame on it. This needs to be done before we set up the execption stack frame because
 						// that function forces the currGuest into master mode.
 						if((guestIterator == currGuest) && !GUEST_IN_MASTER_MODE(currGuest)){
-								currGuest->PSP = psp;
+							currGuest->PSP = psp;
 						} else { /////////////////// BUG TRACKING ELSE BLOCK
-							uint32_t junk = psp;
+							currGuest->MSP = psp;
 						}
 						
 						// Set up the stack for this guest to take a SysTick exception.
@@ -1121,13 +1124,7 @@ void exceptionProcessor() {
 												   GUEST_IN_MASTER_MODE(guestIterator) ? guestIterator->MSP : guestIterator->PSP,
 												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
 
-			__asm volatile(
-			"movs r0, 0xff\n"  // Disable interrupts during processing of the UART exception
-			"msr basepri,r0\n"
-			:      // output
-			:      // input
-			:"r0"  // clobbered register
-			);
+						SET_CPU_BASEPRI(0x01);
 
 						// placeExceptionOnGuestStack is going to update the guest's stack pointer.
 						// If that guest is the currently active one (currGuest), then we need to
@@ -1213,7 +1210,13 @@ void exceptionProcessor() {
 			// This is an alternative to the hardcoded method below as presented in HotMobile 18
 			if(intlist[exceptionNum-16].owner != NULL){
 				currGuest = intlist[exceptionNum-16].owner;
-				SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
+				//SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
+				SET_CPU_BASEPRI(0x01);
+
+				// TESTING: Temporarily disable the interrupt while we process it
+				uint32_t *ICER = 0xe000e180;
+				ICER[(exceptionNum-16)/32] |= (1<<((exceptionNum-16)%32));
+				SYSTICK_INTERRUPT_DISABLE();
 			}
 
 			// Install the new guest's PSP
@@ -1357,14 +1360,15 @@ void hermesResetHandler(){
 
 	hvInit();
 	
-	dummyGuest = createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
-	createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
+//	dummyGuest = createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
+	mmcguest = createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
 
 	// Set configurable interrupts to low priority
 	pDest = 0xe000e400;
 	while(pDest < 0xe000e500){
-		//*pDest = 0xffffffff;
-		*pDest = 0xc0c0c0c0;
+		*pDest = 0xffffffff;
+		//*pDest = 0xc0c0c0c0;
+		//*pDest = 0;
 		pDest++;
 	}
 	
@@ -1374,10 +1378,11 @@ void hermesResetHandler(){
 	}
 	
 	// Hardcode interrupt priorities for guest ownership of peripherals
-	intlist[14].owner = dummyGuest;
-	intlist[14].priority = 0xff;
-	
-	((uint8_t*)0xe000e400)[14] = 0xff; // set uart interrupt to highest priority
+	intlist[18].owner = mmcguest; // MMC
+	intlist[18].priority = 0x60;
+	intlist[58].owner = mmcguest; // DMA
+	intlist[58].priority = 0x20;
+//	((uint8_t*)0xe000e400)[14] = 0xff; // set uart interrupt to highest priority
 	// Hardware init
 #ifdef HERMES_ETHERNET_BRIDGE
 	/* Configure systick for 1 ms. */
@@ -1403,7 +1408,7 @@ void hermesResetHandler(){
 //SCB_EnableDCache();
 
 	// Initialize SysTick Module
-	CORTEXM7_SYST_RVR = 100000;
+	CORTEXM7_SYST_RVR = 1000000;
 	CORTEXM7_SYST_CSR = 7;
 
 	// Switch to unpriv execution

@@ -25,7 +25,7 @@ SOFTWARE.
 
 */
 
-#include "libboard/board.h"
+#include "board.h"
 
 //#include "uip.h"
 //#include "uip_arp.h"
