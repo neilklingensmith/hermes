@@ -32,6 +32,31 @@ SOFTWARE.
 #include <string.h>
 
 
+/*
+ * rotl32
+ *
+ * Rotates x left by n bits
+ *
+ */
+uint32_t rotl32 (uint32_t x, uint32_t n)
+{
+	//assert (n<32);
+	return (x<<n) | (x>>(-n&31));
+}
+
+/*
+ * rotr32
+ *
+ * Rotates x right by n bits
+ *
+ */
+uint32_t rotr32 (uint32_t x, uint32_t n)
+{
+	//assert (n<32);
+	return (x>>n) | (x<(-n&31));
+}
+
+
 void *effectiveAddress(struct inst *instruction, struct vm *guest){
 	// Compute the effective address of the instruction
 	switch(instruction->type){
@@ -41,6 +66,8 @@ void *effectiveAddress(struct inst *instruction, struct vm *guest){
 		case THUMB_TYPE_LDSTHALFWORD:
 		case THUMB_TYPE_LDSTSINGLE:
 			return guest->guest_regs[instruction->Rn] + (instruction->imm<<2);
+		case THUMB_TYPE_LDST:
+			return guest->guest_regs[instruction->Rn] + (instruction->imm);
 		default:
 			return (void*)-1;
 	}
@@ -197,7 +224,7 @@ int instDecode(struct inst *instruction, uint16_t *location){
 	}else if ((encoding & THUMB_MASK_32BINSTC) == THUMB_OPCODE_32BINSTC){
 		// 32-bit instructions: Load/Store single with memory hints
 		instruction->nbytes = 4;
-		uint32_t encoding32 = *((uint32_t*)location);
+		uint32_t encoding32 = rotl32(*((uint32_t*)location),16);
 		strcpy(instruction->mnemonic,"STR");
 		if((encoding32 & (1<<20)) != 0){ // Check if this is a load or store
 			instruction->mnemonic[0] = 'L';
@@ -216,12 +243,15 @@ int instDecode(struct inst *instruction, uint16_t *location){
 			instruction->imm = encoding32 & 0xfff;
 			if(encoding32>>24 & 1){ // Sign extend?
 				instruction->imm = (encoding32 & 0xfff) | ((encoding32 & 0x800) ? 0xfffff000 : 0); // Sign extend immediate
-				} else {
+			} else {
 				instruction->imm = (encoding32 & 0xfff); // zero extend immediate if S bit clear
+			}
+			if((encoding32 & (1<<23)) == 0) { // Check the instruction's 'U' flag, which tells us to add or subtract the immediate
+				instruction->imm = -instruction->imm;
 			}
 			instruction->Rt = (encoding32 >> 12) & 0xf;
 			instruction->Rn = (encoding32 >> 16) & 0xf;
-			instruction->type = THUMB_TYPE_LDSTWORDBYTE;
+			instruction->type = THUMB_TYPE_LDST;
 		}
 		// TODO: Add other instruction types from section 3.3.3 of the Thumb 2 Manual.
 	}else if ((encoding & THUMB_MASK_LDSTREG) == THUMB_OPCODE_LDSTREG){

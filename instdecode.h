@@ -140,6 +140,7 @@ SOFTWARE.
 
 #define THUMB_TYPE_NOP_HINTS       26 // See page 3-31 of Thumb2 Supplemental Ref Man
 #define THUMB_TYPE_LDSTPCIMM       27 // See page 3-26 of Thumb2 Supplemental Ref Man
+#define THUMB_TYPE_LDST            28
 
 // Register definitions for the MRS instruction
 #define MRS_REGISTER_MSP           8
