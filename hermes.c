@@ -703,9 +703,11 @@ int emulateNVICAccess(struct vm *guest, uint16_t *location, struct inst *instruc
 		} else if ((ea >= 0xE000E280) && (ea <= 0xE000E29c)){ // ICPR access
 		} else if ((ea >= 0xE000E300) && (ea <= 0xE000E31c)){ // IABR access
 		} else if ((ea >= 0xE000E400) && (ea <= 0xE000E4ef)){ // IPR access
+			return 0;// Ignore writes to the IPRs
 		}
 	}
 	executePrivilegedInstruction(location, instruction);
+	return 0;
 }
 
 /*

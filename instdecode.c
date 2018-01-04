@@ -194,6 +194,36 @@ int instDecode(struct inst *instruction, uint16_t *location){
 		} else if ((encoding32 & THUMB_MASK32_LDSTM) == THUMB_OPCODE32_LDSTM) {
 			instruction->type = THUMB_TYPE_LDSTM32;
 		}
+	}else if ((encoding & THUMB_MASK_32BINSTC) == THUMB_OPCODE_32BINSTC){
+		// 32-bit instructions: Load/Store single with memory hints
+		instruction->nbytes = 4;
+		uint32_t encoding32 = *((uint32_t*)location);
+		strcpy(instruction->mnemonic,"STR");
+		if((encoding32 & (1<<20)) != 0){ // Check if this is a load or store
+			instruction->mnemonic[0] = 'L';
+		}
+
+		if((encoding32 & THUMB_MASK32_LDSTMEMHINT_PCIMM) == THUMB_OPCODE32_LDSTMEMHINT_PCIMM){
+			instruction->imm = encoding32 & 0xfff;
+			if(encoding32>>24 & 1){ // Sign extend?
+				instruction->imm = (encoding32 & 0xfff) | ((encoding32 & 0x800) ? 0xfffff000 : 0); // Sign extend immediate
+			} else {
+				instruction->imm = (encoding32 & 0xfff); // zero extend immediate if S bit clear
+			}
+			instruction->Rt = (encoding32 >> 12) & 0xf;
+			instruction->type = THUMB_TYPE_LDSTPCIMM;
+		} else if((encoding32 & THUMB_MASK32_LDSTMEMHINT_REGIMM) == THUMB_OPCODE32_LDSTMEMHINT_REGIMM){
+			instruction->imm = encoding32 & 0xfff;
+			if(encoding32>>24 & 1){ // Sign extend?
+				instruction->imm = (encoding32 & 0xfff) | ((encoding32 & 0x800) ? 0xfffff000 : 0); // Sign extend immediate
+				} else {
+				instruction->imm = (encoding32 & 0xfff); // zero extend immediate if S bit clear
+			}
+			instruction->Rt = (encoding32 >> 12) & 0xf;
+			instruction->Rn = (encoding32 >> 16) & 0xf;
+			instruction->type = THUMB_TYPE_LDSTWORDBYTE;
+		}
+		// TODO: Add other instruction types from section 3.3.3 of the Thumb 2 Manual.
 	}else if ((encoding & THUMB_MASK_LDSTREG) == THUMB_OPCODE_LDSTREG){
 		// Load/store register offset instructions
 		instruction->type = THUMB_TYPE_LDSTREG;
