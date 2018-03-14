@@ -364,7 +364,7 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
 	char *srcptr = (char*)&dummyfunc;
 	memcpy(privexe, (char*)((uint32_t)srcptr & 0xfffffffe), 64); // Copy dummyfunc into privexe array. NOTE: the (srcptr & 0xfe) is a workaround because gcc always adds 1 to the address of a function pointer because
 	*((uint32_t*)(privexe+14)) = 0xbf00bf00; // Set the target instructions in privexe to NOPs
-	
+
 	memcpy(privexe+14, (char*)offendingInstruction, instruction->nbytes);
 	SCB_InvalidateICache();
 	__asm volatile(
@@ -819,10 +819,12 @@ void exceptionProcessor() {
 			
 
 			// TEST: Re-enable interrupt source that was disabled in the default switch case
+#if 0
 			if(GET_PROCESSOR_EXCEPTION(currGuest) >= 16){
 				uint32_t *ISER = 0xe000e100;
 				ISER[(GET_PROCESSOR_EXCEPTION(currGuest)-16)/32] |= (1<<((GET_PROCESSOR_EXCEPTION(currGuest)-16)%32));
 			}
+#endif
 			SYSTICK_INTERRUPT_ENABLE();
 
 			SET_PROCESSOR_EXCEPTION(currGuest,0); // Indicate that the guest has returned from the exception it was handling.
@@ -1212,13 +1214,15 @@ void exceptionProcessor() {
 			// This is an alternative to the hardcoded method below as presented in HotMobile 18
 			if(intlist[exceptionNum-16].owner != NULL){
 				currGuest = intlist[exceptionNum-16].owner;
-				//SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
-				SET_CPU_BASEPRI(0x01);
+				SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
+				//SET_CPU_BASEPRI(0x01);
 
 				// TESTING: Temporarily disable the interrupt while we process it
+#if 0
 				uint32_t *ICER = 0xe000e180;
 				ICER[(exceptionNum-16)/32] |= (1<<((exceptionNum-16)%32));
 				SYSTICK_INTERRUPT_DISABLE();
+#endif
 			}
 
 			// Install the new guest's PSP
@@ -1373,17 +1377,26 @@ void hermesResetHandler(){
 		//*pDest = 0;
 		pDest++;
 	}
-	
+
+	// Set interrupt enable registers to 1's. Only enable interrupts that are implemented on this chip.
+	pDest = 0xe000e100;
+	*pDest++ = 0xffffffff;
+	*pDest++ = 0xffffffff;
+//	while(pDest < 0xe000e180){
+//		*pDest = 0xffffffff;
+//		pDest++;
+//	}
+
 	for(i = 0; i < 240; i++){
 		intlist[i].owner = NULL;
-		intlist[i].priority = 0xc0;
+		intlist[i].priority = 0xe0;
 	}
 	
 	// Hardcode interrupt priorities for guest ownership of peripherals
 	intlist[18].owner = mmcguest; // MMC
-	intlist[18].priority = 0x60;
+//	intlist[18].priority = 0x60;
 	intlist[58].owner = mmcguest; // DMA
-	intlist[58].priority = 0x20;
+//	intlist[58].priority = 0x20;
 //	((uint8_t*)0xe000e400)[14] = 0xff; // set uart interrupt to highest priority
 	// Hardware init
 #ifdef HERMES_ETHERNET_BRIDGE
