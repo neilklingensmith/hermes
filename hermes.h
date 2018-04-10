@@ -91,6 +91,9 @@ SOFTWARE.
 #define ARM_CORTEX_M7_PENDSV_ISR_NUM          14
 #define ARM_CORTEX_M7_SYSTICK_ISR_NUM         15
 
+
+#define NUM_PERIPHERAL_INTERRUPTS 64
+
 ///////////////////////////////////////////////
 // SAME70 ISR numbers
 

@@ -42,9 +42,9 @@ SOFTWARE.
 char hvStack[HV_STACK_SIZE];
 char privexe[64]; // memory to hold code to execute privileged instructions.
 struct vm *guestList = NULL, *sleepingList = NULL, *currGuest = NULL;
-uint32_t guest_regs[15];
+//uint32_t guest_regs[15];
 
-struct interrupt intlist[240];
+struct interrupt intlist[NUM_PERIPHERAL_INTERRUPTS];
 
 int putChar(uint32_t c); // for esp_printf
 
@@ -668,7 +668,7 @@ int emulateSysTickAccess(struct vm *guest, uint16_t *location, struct inst *inst
 			guest->virtualSysTick->CVR = storeVal; // Set up the CVR when we write to the RVR. This will start the counter.
 			break;
 		case (uint32_t)&CORTEXM7_SYST_CVR:
-			storeVal = storeVal / 10000;
+			storeVal = storeVal / 1000;
 			if(storeVal  == 0){
 				storeVal = 2;
 			}
@@ -1335,6 +1335,7 @@ void hermesResetHandler(){
 	extern void *exception_table, *exception_table_g2;
 	extern void *dummyVectorTable[];
 	int i;
+	uint8_t *pB;
 	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
 
 	/* Initialize the relocate segment */
@@ -1379,15 +1380,12 @@ void hermesResetHandler(){
 	}
 
 	// Set interrupt enable registers to 1's. Only enable interrupts that are implemented on this chip.
-	pDest = 0xe000e100;
-	*pDest++ = 0xffffffff;
-	*pDest++ = 0xffffffff;
-//	while(pDest < 0xe000e180){
-//		*pDest = 0xffffffff;
-//		pDest++;
-//	}
+	pB = 0xe000e100;
+	for(i = 0; i < NUM_PERIPHERAL_INTERRUPTS/8; i++){
+		*pB++ = 0xff;
+	}
 
-	for(i = 0; i < 240; i++){
+	for(i = 0; i < NUM_PERIPHERAL_INTERRUPTS; i++){
 		intlist[i].owner = NULL;
 		intlist[i].priority = 0xe0;
 	}
