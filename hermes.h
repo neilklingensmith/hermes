@@ -33,14 +33,24 @@ SOFTWARE.
 
 #include <stdint.h>
 
-
+///////////////////////////////////////////////
+// Configuration options
 #define HV_STACK_SIZE 4096
-//#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+#define HERMES_ETHERNET_BRIDGE // Enable bridged ethernet
+#define HERMES_INTERNAL_DMA
 
 
 ///////////////////////////////////////////////
 // ARM Cortex Specific Regs
 ///////////////////////////////////////////////
+#define NVIC_IPR     ((volatile uint8_t*)0xE000E400)
+#define ISER1 (*(uint32_t*)0xe000e104)
+#define ISER0 (*(uint32_t*)0xe000e100)
+
+
+///////////////////////////////
+// Nonvolatile Interrupt Controller (NVIC)
+#define CORTEXM7_SHCSR (*(uint32_t*)0xe000ed24)
 
 
 ///////////////////////////////
@@ -98,7 +108,7 @@ SOFTWARE.
 // SAME70 ISR numbers
 
 #define SAME70_ETHERNET_ISR_NUM       55
-
+#define SAME70_DMA_ISR_NUM            (58+16)
 
 struct sysTick {
 	uint32_t CSR;
@@ -134,7 +144,7 @@ struct nvic {
 };
 
 struct interrupt {
-	uint32_t priority;
+	uint8_t priority;
 	struct vm *owner;
 };
 
@@ -179,10 +189,12 @@ struct listElement {
 };
 
 void hvInit();
+void ioInit(void);
+void guestInit(void);
 void exceptionProcessor(void) ;
 void genericHandler() __attribute__((naked));
 void hermesResetHandler();
-int listAdd(struct listElement **head, struct listElement *newElement);
+int listAdd(struct vm **head, struct vm *newElement);
 
 
 #define __SYNCH__() asm("dsb sy\nisb sy\n")
@@ -247,7 +259,6 @@ int listAdd(struct listElement **head, struct listElement *newElement);
 
 #define SYSTICK_INTERRUPT_DISABLE() (CORTEXM7_SYST_CSR &= ~(1<<1))
 #define SYSTICK_INTERRUPT_ENABLE()  (CORTEXM7_SYST_CSR |= (1<<1))
-
 
 
 #endif /* HV_H_ */
