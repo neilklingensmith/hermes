@@ -27,7 +27,7 @@ SOFTWARE.
 #include "hermes.h"
 #ifdef HERMES_ETHERNET_BRIDGE
 
-#include "board.h"
+#include "libboard/board.h"
 
 //#include "uip.h"
 //#include "uip_arp.h"

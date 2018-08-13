@@ -3,7 +3,7 @@
 
 MIT License
 
-Copyright (c) 2017 Neil Klingensmith
+Copyright (c) 2018 Neil Klingensmith
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,46 +25,52 @@ SOFTWARE.
 
 */
 
+
+///////////////////////////////////////////////
+// Includes
+
 //#include "chip.h"
 #include "hermes.h"
 #ifdef HERMES_ETHERNET_BRIDGE
-#include "libboard/include/gmacb_phy.h"
-#endif
-#ifdef HERMES_ETHERNET_BRIDGE
+//#include "libboard/include/gmacb_phy.h"
 #include "virt_eth.h"
 #endif
-#include "chip.h"
+#include "libchip/chip.h"
 #include "nalloc.h"
 #include "instdecode.h"
+#include "libboard/board.h"
 #include <stdint.h>
 #include <string.h>
 
+///////////////////////////////////////////////
+// Function Prototypes
+
+void XDMAC_Handler1();
+
+///////////////////////////////////////////////
+// Global Variables
+
+extern sXdmad lcdSpiDma;
+
+void *ramVectors[80]  __attribute__ ((aligned (128))); // RAM-located vector table for Hermes
+
 char hvStack[HV_STACK_SIZE];
 char privexe[64]; // memory to hold code to execute privileged instructions.
-struct vm *guestList = NULL, *sleepingList = NULL, *currGuest = NULL;
-//uint32_t guest_regs[15];
+extern struct vm *guestList, *sleepingList, *currGuest; // Defined in the scheduler
 
 struct interrupt intlist[NUM_PERIPHERAL_INTERRUPTS];
 
-int putChar(uint32_t c); // for esp_printf
-
-
 #ifdef HERMES_ETHERNET_BRIDGE
-char eth_buf[ETH_BUF_SIZE+2];
-#endif
 
-#ifdef HERMES_ETHERNET_BRIDGE
-/* The GMAC driver instance */
-sGmacd gGmacd __attribute__ ((aligned (32)));
-/* The GMACB driver instance */
-GMacb gGmacb __attribute__ ((aligned (32)));
+char eth_buf[ETH_BUF_SIZE+2]; // Buffer for Ethernet frames
+
+sGmacd gGmacd __attribute__ ((aligned (32))); // The GMAC driver instance
+
+GMacb gGmacb __attribute__ ((aligned (32))); // The GMACB driver instance
 
 #endif
 
-struct vm *mmcguest; // LATENCY TESTING ONLY!!!
 
-
-void *ramVectors[80]  __attribute__ ((aligned (128)));
 
 __attribute__ ((section(".vectors")))
 void *hvVectorTable[] __attribute__ ((aligned (128))) = {
@@ -189,47 +195,7 @@ void dummyfunc()
 	);
 }
 
-/*
- * listAdd
- *
- * Adds newElement to a linked list pointed to by list. When calling this function, pass the address of list head.
- *
- */
-int listAdd(struct listElement **head, struct listElement *newElement){
-	struct listElement *iterator = (struct listElement*)head ;
-
-	// Link element b into the list between iterator and iterator->next.
-	newElement->next = iterator->next ;
-	newElement->prev = iterator ;
-
-	iterator->next = newElement ;
-	
-	if(newElement->next != NULL){
-		newElement->next->prev = newElement ;
-	}
-	return 0;
-}
-
-
-/*
- * listRemove
- *
- * Deletes an element from a doubly linked list.
- */
-void listRemove(struct listElement *element)
-{
-	if(element->next != NULL)
-		element->next->prev = element->prev ;
-	
-	element->prev->next = element->next ;
-
-	// NULLify the element's next and prev pointers to indicate
-	// that it is not linked into a list.
-	element->next = NULL ;
-	element->prev = NULL ;
-}
-
-int createGuest(void *guestExceptionTable){
+struct vm *createGuest(void *guestExceptionTable){
 	struct vm *newGuest = nalloc(sizeof(struct vm));
 	struct scb *newSCB = nalloc(sizeof(struct scb));
 	struct sysTick *newSysTick = nalloc(sizeof(struct sysTick));
@@ -238,7 +204,7 @@ int createGuest(void *guestExceptionTable){
 	uint32_t *new_guest_regs = nalloc(16*sizeof(uint32_t));
 	
 	if((uint32_t)newGuest == (uint32_t)-1 || (uint32_t)newSCB == (uint32_t)-1 || (uint32_t)new_guest_regs == (uint32_t)-1){
-		return -1;
+		return NULL;
 	}
 
 	listAdd((struct listElement **)&guestList, (struct listElement *)newGuest);
@@ -271,6 +237,8 @@ int createGuest(void *guestExceptionTable){
 	((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
 
 	currGuest = guestList; // Point currGuest to first element in guestList
+	
+	return newGuest;
 }
 
 void hvInit() {
@@ -660,7 +628,7 @@ int emulateSysTickAccess(struct vm *guest, uint16_t *location, struct inst *inst
 			guest->virtualSysTick->CSR = storeVal;
 			break;
 		case (uint32_t)&CORTEXM7_SYST_RVR:
-			storeVal = storeVal / 10000;
+			storeVal = storeVal / 240000;
 			if(storeVal  == 0){
 				storeVal = 2;
 			}
@@ -722,44 +690,6 @@ int configureNVIC(struct vm *guest){
 	
 }
 
-int hvScheduler(uint32_t *psp){
-	// Save the current guest's context.
-	if(GUEST_IN_MASTER_MODE(currGuest)){
-		currGuest->MSP = psp;
-	} else {
-		currGuest->PSP = psp;
-	}
-	
-	// Dumb scheduler. Cycle thru guests.
-	if(currGuest->next != NULL){
-		currGuest = currGuest->next;
-	} else {
-		currGuest = guestList;
-	}
-
-	// Install the new guest's PSP
-	if(GUEST_IN_MASTER_MODE(currGuest)){
-		SET_CPU_PSP(currGuest->MSP);
-	} else {
-		SET_CPU_PSP(currGuest->PSP);
-	}
-
-	if(GET_PROCESSOR_EXCEPTION(currGuest) != 0){
-		__asm volatile(
-//		"mrs %0,basepri\n" // Save the guest's BASEPRI
-		"movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
-		"msr basepri,r0\n"
-		://"=r"(currGuest->BASEPRI) // output
-		:                         // input
-		:"r0"                     // clobbered register
-		);
-	} else {
-		SET_CPU_BASEPRI(currGuest->BASEPRI);
-	}
-	
-	return 0;
-}
-
 /*
  * exceptionProcessor
  *
@@ -778,10 +708,12 @@ void exceptionProcessor() {
 	uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
 	struct inst instruction; // Instruction that caused the exception for bus faults and usage faults (emulated privileged instrs)
 	uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
-	uint32_t pkt_len = 0 ;
-	static int count = 0;
+#ifdef HERMES_ETHERNET_BRIDGE
+	uint32_t pkt_len;
+#endif
+	//static int count = 0;
 
-	count++;
+	//count++;
 	// Get the address of the instruction that caused the exception and the PSP
 	__asm
 	(
@@ -817,14 +749,6 @@ void exceptionProcessor() {
 
 			currGuest->MSP = ((*(psp+7)>>9 & 1)*4)+psp + 8; // Store the guest's MSP
 			
-
-			// TEST: Re-enable interrupt source that was disabled in the default switch case
-#if 0
-			if(GET_PROCESSOR_EXCEPTION(currGuest) >= 16){
-				uint32_t *ISER = 0xe000e100;
-				ISER[(GET_PROCESSOR_EXCEPTION(currGuest)-16)/32] |= (1<<((GET_PROCESSOR_EXCEPTION(currGuest)-16)%32));
-			}
-#endif
 			SYSTICK_INTERRUPT_ENABLE();
 
 			SET_PROCESSOR_EXCEPTION(currGuest,0); // Indicate that the guest has returned from the exception it was handling.
@@ -927,23 +851,19 @@ void exceptionProcessor() {
 			usageFaultStatus = CORTEXM7_UFSR;
 
 			if(usageFaultStatus & 1){ // Check for illegal instruction
-
-				// LATENCY TEST ONLY!!!!
-				instDecode(&instruction, guestPC); // Decode the instruction
+				// LATENCY TESTING
+				instDecode(&instruction, guestPC);
 				if(instruction.imm == 1){
-					asm("ldr r0,=0xE0001004\n"
-					"ldr %0,[r0]\n"
-					: "=r"(currGuest->guest_regs[0])
-					:
-					: "r0");
-					*(psp+6) += 2;
-					CORTEXM7_UFSR = 0xff;
-					break;
+					asm("ldr r0,=0xe0001004\n"
+					    "ldr %0, [r0]\n"
+						: "=r" (currGuest->guest_regs[0])
+						:
+						: "r0");
+						*(psp+6) += 2;
+						CORTEXM7_UFSR = 0xff;
+						break;
 				}
-				// end latency testing
-					
-
-
+				// LATENCY TESTING
 
 				// Point the guest's PC past the illegal instruction and continue executing.
 				*(psp+6) += 2;
@@ -1031,11 +951,45 @@ void exceptionProcessor() {
 				// If the previous instruction was a wait for event or wait for interrupt, then the guest was trying to put the CPU to sleep. Un-schedule the guest and run the scheduler.
 				if(offendingInstruction != -1){
 					struct vm *oldGuest = currGuest;
-					// Remove the old guest from the active list and add it to the sleeping list.
-					listRemove((struct listElement*)oldGuest);
-					listAdd((struct listElement **)&sleepingList, (struct listElement *)oldGuest);
 
-					hvScheduler(psp); // Run the scheduler to select a new guest
+
+					// Save the current guest's context.
+					if(GUEST_IN_MASTER_MODE(currGuest)){
+						currGuest->MSP = psp;
+					} else {
+						currGuest->PSP = psp;
+					}
+					// Remove the old guest from the active list and add it to the sleeping list.
+					if(currGuest->next != NULL){
+						currGuest = currGuest->next;
+					} else {
+						currGuest = guestList;
+					}
+
+					listRemove((struct listElement*)oldGuest);
+					listAdd((struct listElement **)&sleepingList, (struct listElement *)oldGuest);					
+					SET_CPU_BASEPRI(currGuest->BASEPRI);
+					
+					// Install the new guest's PSP
+					if(GUEST_IN_MASTER_MODE(currGuest)){
+						SET_CPU_PSP(currGuest->MSP);
+					} else {
+						SET_CPU_PSP(currGuest->PSP);
+					}
+#if 0
+					// re-read the PSP since it might have been changed by changing the currGuest
+					__asm
+					(
+					"  mrs %0,psp\n"
+					: "=r" (psp)                /* output */
+					:                           /* input */
+					:                           /* clobbered register */
+					);
+#endif
+
+					
+					//hvScheduler(psp); // Run the scheduler to select a new guest
+
 				}
 				
 				///////////////////////////////////////////////////////////////
@@ -1071,7 +1025,6 @@ void exceptionProcessor() {
 		case 14: // PendSV
 			break;
 		case 15: // SysTick
-
 			// Clear all the VMs off the sleeping list
 			do{
 				struct vm *sleepIterator = sleepingList;
@@ -1090,7 +1043,6 @@ void exceptionProcessor() {
 												   ARM_CORTEX_M7_SYSTICK_ISR_NUM);
 
 						SET_CPU_BASEPRI(0x01);
-
 
 						temp = sleepIterator->next;
 						listRemove((struct listElement*)sleepIterator);
@@ -1149,7 +1101,12 @@ void exceptionProcessor() {
 			hvScheduler(psp);
 
 			return;
+#ifdef HERMES_INTERNAL_DMA:
+		case SAME70_DMA_ISR_NUM:
 			
+			XDMAD_Handler(&lcdSpiDma);
+			break;
+#endif
 #ifdef HERMES_ETHERNET_BRIDGE
 		case SAME70_ETHERNET_ISR_NUM:
 			GMACD_Handler(&gGmacd,0);
@@ -1199,10 +1156,6 @@ void exceptionProcessor() {
 #endif
 
 		default: // Higher-order interrupt numbers are chip-specific.
-		
-			// DEBUG ONLY!!
-			// LATENCY TESTING!!
-
 			// Save the current guest's context.
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				currGuest->MSP = psp;
@@ -1214,15 +1167,18 @@ void exceptionProcessor() {
 			// This is an alternative to the hardcoded method below as presented in HotMobile 18
 			if(intlist[exceptionNum-16].owner != NULL){
 				currGuest = intlist[exceptionNum-16].owner;
-				SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
-				//SET_CPU_BASEPRI(0x01);
 
-				// TESTING: Temporarily disable the interrupt while we process it
-#if 0
-				uint32_t *ICER = 0xe000e180;
-				ICER[(exceptionNum-16)/32] |= (1<<((exceptionNum-16)%32));
-				SYSTICK_INTERRUPT_DISABLE();
-#endif
+				// If the guest was sleeping, put it back on the active list.
+				listRemove((struct listElement*)currGuest);
+				listAdd((struct listElement **)&guestList, (struct listElement *)currGuest);
+
+				SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
+			} else {
+				// NOTE TO PROGRAMMER:
+				// Your code got to this dark place because the CPU took an
+				// exception that was not properly registered with Hermes. See
+				// http://hermes.wings.cs.wisc.edu/docs/start.html 
+				asm("bkpt #01");
 			}
 
 			// Install the new guest's PSP
@@ -1239,8 +1195,6 @@ void exceptionProcessor() {
 			:                           /* input */
 			:                           /* clobbered register */
 			);
-			////////
-			// END DEBUG LATENCY TESTING
 
 			if(GUEST_IN_MASTER_MODE(currGuest)){
 				newStackFrame = psp - 8;
@@ -1307,7 +1261,7 @@ void exceptionProcessor() {
 }
 
 
-/* Initialize segments. These are defined in the linker script */
+// Initialize segments. These are defined in the linker script
 extern uint32_t _sfixed;
 extern uint32_t _efixed;
 extern uint32_t _etext;
@@ -1332,11 +1286,15 @@ extern uint32_t _estack;
  *    4. Starts running guests.
  */
 void hermesResetHandler(){
-	extern void *exception_table, *exception_table_g2;
-	extern void *dummyVectorTable[];
+	//extern void *dummyVectorTable[];
 	int i;
 	uint8_t *pB;
 	register uint32_t *pSrc, *pDest; // Must be register variables because if they are stored on the stack (which is in the .bss section), their values will be obliterated when clearing .bss below
+
+	// Enable cycle count
+	*((uint32_t*)0xe000edfc) |= 0x01000000; // Enable DWT
+	*((uint32_t*)0xe0001004) = 0; // Reset cycle counter
+	*((uint32_t*)0xE0001000) |= 1; // Enable cycle counter
 
 	/* Initialize the relocate segment */
 	pSrc = &_etext;
@@ -1358,48 +1316,27 @@ void hermesResetHandler(){
 
 	//CORTEXM7_VTOR = ((uint32_t) hvVectorTable);
 	CORTEXM7_VTOR = ((uint32_t) ramVectors);
-	
-	//LowLevelInit();
-	/* Initialize the C library */
-	//__libc_init_array();
-	/* Disable watchdog */
-	//WDT_Disable(WDT);
 
 	hvInit();
 	
-//	dummyGuest = createGuest(&dummyVectorTable); // Init FreeRTOS Blinky demo guest
-	mmcguest = createGuest(&exception_table); // Init FreeRTOS Blinky demo guest
+	guestInit();
 
 	// Set configurable interrupts to low priority
 	pDest = 0xe000e400;
 	while(pDest < 0xe000e500){
 		*pDest = 0xffffffff;
-		//*pDest = 0xc0c0c0c0;
-		//*pDest = 0;
 		pDest++;
-	}
-
-	// Set interrupt enable registers to 1's. Only enable interrupts that are implemented on this chip.
-	pB = 0xe000e100;
-	for(i = 0; i < NUM_PERIPHERAL_INTERRUPTS/8; i++){
-		*pB++ = 0xff;
 	}
 
 	for(i = 0; i < NUM_PERIPHERAL_INTERRUPTS; i++){
 		intlist[i].owner = NULL;
 		intlist[i].priority = 0xe0;
 	}
-	
-	// Hardcode interrupt priorities for guest ownership of peripherals
-	intlist[18].owner = mmcguest; // MMC
-//	intlist[18].priority = 0x60;
-	intlist[58].owner = mmcguest; // DMA
-//	intlist[58].priority = 0x20;
-//	((uint8_t*)0xe000e400)[14] = 0xff; // set uart interrupt to highest priority
+
 	// Hardware init
 #ifdef HERMES_ETHERNET_BRIDGE
 	/* Configure systick for 1 ms. */
-	//TimeTick_Configure();
+	TimeTick_Configure();
 	
 	// The Atmel ethernet driver uses the SysTick exception to time delays.
 	// Since we haven't started the HV yet, we can't use the HV's exception
@@ -1411,18 +1348,27 @@ void hermesResetHandler(){
 	ramVectors[15] = SysTick_Handler;
 
 	uint8_t macaddr[] = {0x3a, 0x1f, 0x34, 0x08, 0x54, 0x54};
-	//gmac_tapdev_setmac_g1((uint8_t *)macaddr);
 	gmac_tapdev_init_hermes();
-	CORTEXM7_SYST_CVR = 0; // Reset the system timer so we don't get a SysTick exception before we start the HV
+	CORTEXM7_SYST_CVR = 0xc0; // Reset the system timer so we don't get a SysTick exception before we start the HV
 	ramVectors[15] = hvVectorTable[15];
 #endif
 
+
+	// Set interrupt enable registers to 1's. Only enable interrupts that are implemented on this chip.
+	asm("cpsid i"); // Globally disable interrupts during setup.
+	pB = 0xe000e100;
+	for(i = 0; i < NUM_PERIPHERAL_INTERRUPTS/8; i++){
+		*pB++ = 0xff;
+	}
+	ioInit(); // Initialize interrupt sources and assign to guests (application specific)
 //SCB_EnableICache();
 //SCB_EnableDCache();
 
+
 	// Initialize SysTick Module
-	CORTEXM7_SYST_RVR = 1000000;
+	CORTEXM7_SYST_RVR = 4*0x249f0;
 	CORTEXM7_SYST_CSR = 7;
+	CORTEXM7_SYST_CVR = 0;
 
 	// Switch to unpriv execution
 	__asm volatile

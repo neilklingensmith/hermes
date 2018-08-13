@@ -72,7 +72,7 @@ uint32_t virtEthRead(uint8_t *buffer, uint32_t len) {
 	uint32_t nbytes = 0;
 
 	// Disable Interrupts
-	asm("mov r0,0xff\n"
+	asm("mov r0,0xc0\n"
 	"msr basepri,r0\n"
 	"udf #0":::"r0");
 
