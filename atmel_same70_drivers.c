@@ -24,6 +24,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
+#include "hermes.h"
+#ifdef HERMES_ETHERNET_BRIDGE
 
 #include "board.h"
 
@@ -150,3 +152,5 @@ void gmac_tapdev_init_hermes(void)
 	
 	//printf( "P: Link detected \n\r" ) ;
 }
+
+#endif
