@@ -51,27 +51,27 @@ struct vm *lcdguest, *ethguest, *gpsguest, *cpuguest;
  *    3. Assign the interrupt to a guest in the in Hermes's intlist[] array.
  */
 void ioInit(void) {
-	
-	// Set interrupt priority in the IPR
-	NVIC_IPR[45] = 0xc0;// Set priority of UART3 interrupt to 0xc0
-	NVIC_IPR[24] = 0xc0;
-	NVIC_IPR[27] = 0xc0;
-	
-	// Enable interrupt in ISER
-	ISER1 |= (1<<(45-32));// Enable UART3 interrupt in the NVIC
-	ISER0 |= (1<<24);
-	ISER0 |= (1<<27);
-	
-	// Assign interrupt source to guest
-	intlist[58].owner = lcdguest; // DMA
-	intlist[23].owner = ethguest;//TC0
-	intlist[45].owner = gpsguest; // UART3
-	intlist[45].priority = 0xc0; // UART3
-	intlist[24].owner = gpsguest;//TC1
-	intlist[24].priority = 0xc0;//TC1
-	intlist[27].owner = gpsguest;//TC1
-	intlist[27].priority = 0xc0;//TC1
-	
+    
+    // Set interrupt priority in the IPR
+    NVIC_IPR[45] = 0xc0;// Set priority of UART3 interrupt to 0xc0
+    NVIC_IPR[24] = 0xc0;
+    NVIC_IPR[27] = 0xc0;
+    
+    // Enable interrupt in ISER
+    ISER1 |= (1<<(45-32));// Enable UART3 interrupt in the NVIC
+    ISER0 |= (1<<24);
+    ISER0 |= (1<<27);
+    
+    // Assign interrupt source to guest
+    intlist[58].owner = lcdguest; // DMA
+    intlist[23].owner = ethguest;//TC0
+    intlist[45].owner = gpsguest; // UART3
+    intlist[45].priority = 0xc0; // UART3
+    intlist[24].owner = gpsguest;//TC1
+    intlist[24].priority = 0xc0;//TC1
+    intlist[27].owner = gpsguest;//TC1
+    intlist[27].priority = 0xc0;//TC1
+    
 }
 
 /*
@@ -81,11 +81,11 @@ void ioInit(void) {
  *
  */
 void guestInit(void) {
-	extern void *exception_table,*exception_table_g1,*exception_table_g2,*exception_table_g3;
+    extern void *exception_table,*exception_table_g1,*exception_table_g2,*exception_table_g3;
 
-	lcdguest = createGuest(&exception_table);
-	ethguest = createGuest(&exception_table_g1);
-	gpsguest = createGuest(&exception_table_g2);
-	//cpuguest = createGuest(&exception_table_g3);
+    lcdguest = createGuest(&exception_table);
+    ethguest = createGuest(&exception_table_g1);
+    gpsguest = createGuest(&exception_table_g2);
+    //cpuguest = createGuest(&exception_table_g3);
 
 }

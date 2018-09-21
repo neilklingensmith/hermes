@@ -156,14 +156,14 @@ SOFTWARE.
 
 
 struct inst {
-	uint16_t imm;
-	uint8_t Rd;
-	uint8_t Rn;
-	uint8_t Rm;
-	uint8_t Rt;
-	uint8_t nbytes;
-	uint8_t type;
-	char mnemonic[10];
+    uint16_t imm;
+    uint8_t Rd;
+    uint8_t Rn;
+    uint8_t Rm;
+    uint8_t Rt;
+    uint8_t nbytes;
+    uint8_t type;
+    char mnemonic[10];
 };
 
 

@@ -33,27 +33,27 @@ SOFTWARE.
 #define ETH_BUF_SIZE 1500
 
 struct rxBufDesc {
-	union veRxAddr {
-		uint32_t val;
-		struct veRxAddrBM {
-			uint32_t bOwnership: 1, // User clear, GMAC set this to one once
-			// it has successfully written a frame to
-			// memory
-			bWrap: 1,      // Marks last descriptor in receive buffer
-			addrDW: 30;    // Address in number of DW
-		} bm;
-	} addr;                         // Address, Wrap & Ownership
-	uint16_t length;
+    union veRxAddr {
+        uint32_t val;
+        struct veRxAddrBM {
+            uint32_t bOwnership: 1, // User clear, GMAC set this to one once
+            // it has successfully written a frame to
+            // memory
+            bWrap: 1,      // Marks last descriptor in receive buffer
+            addrDW: 30;    // Address in number of DW
+        } bm;
+    } addr;                         // Address, Wrap & Ownership
+    uint16_t length;
 };
 
 struct virt_eth {
-	struct virt_eth *next;
-	struct virt_eth *prev;
-	struct vm *guest;      // Owner of this interface
-	struct rxBufDesc *rxBufDescList;
-	struct rxBufDesc *currRxBufWrite;
-	struct rxBufDesc *currRxBufRead;
-	uint8_t macAddress[6]; // MAC of this interface
+    struct virt_eth *next;
+    struct virt_eth *prev;
+    struct vm *guest;      // Owner of this interface
+    struct rxBufDesc *rxBufDescList;
+    struct rxBufDesc *currRxBufWrite;
+    struct rxBufDesc *currRxBufRead;
+    uint8_t macAddress[6]; // MAC of this interface
 };
 
 

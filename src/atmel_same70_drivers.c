@@ -25,7 +25,7 @@ SOFTWARE.
 
 */
 #include "hermes.h"
-#ifdef HERMES_ETHERNET_BRIDGE
+#if HERMES_ETHERNET_BRIDGE == 1
 
 #include "libboard/board.h"
 
@@ -84,73 +84,73 @@ uint8_t gGMacAddress[6] = {0x00, 0x45, 0x56, 0x78, 0x9a, 0xbc};
 
 void gmac_tapdev_init_hermes(void)
 {
-	sGmacd    *pGmacd = &gGmacd;
-	GMacb      *pGmacb = &gGmacb;
-	sGmacInit Que0, Que;
+    sGmacd    *pGmacd = &gGmacd;
+    GMacb      *pGmacb = &gGmacb;
+    sGmacInit Que0, Que;
 
-	
-	/* Init GMAC driver structure */
-	memset(&Que0, 0, sizeof(Que0));
-	Que0.bIsGem = 1;
-	Que0.bDmaBurstLength = 4;
-	Que0.pRxBuffer =pRxBuffer;
-	Que0.pRxD = gRxDs;
-	Que0.wRxBufferSize = BUFFER_SIZE;
-	Que0.wRxSize = RX_BUFFERS;
-	Que0.pTxBuffer = pTxBuffer;
-	Que0.pTxD = gTxDs;
-	Que0.wTxBufferSize = BUFFER_SIZE;
-	Que0.wTxSize = TX_BUFFERS;
-	Que0.pTxCb = gTxCbs;
-	
+    
+    /* Init GMAC driver structure */
+    memset(&Que0, 0, sizeof(Que0));
+    Que0.bIsGem = 1;
+    Que0.bDmaBurstLength = 4;
+    Que0.pRxBuffer =pRxBuffer;
+    Que0.pRxD = gRxDs;
+    Que0.wRxBufferSize = BUFFER_SIZE;
+    Que0.wRxSize = RX_BUFFERS;
+    Que0.pTxBuffer = pTxBuffer;
+    Que0.pTxD = gTxDs;
+    Que0.wTxBufferSize = BUFFER_SIZE;
+    Que0.wTxSize = TX_BUFFERS;
+    Que0.pTxCb = gTxCbs;
+    
 
-	
-	memset(&Que, 0, sizeof(Que));
-	Que.bIsGem = 1;
-	Que.bDmaBurstLength = 4;
-	Que.pRxBuffer =pRxDummyBuffer;
-	Que.pRxD = gDummyRxDs;
-	Que.wRxBufferSize = DUMMY_BUFF_SIZE;
-	Que.wRxSize = DUMMY_SIZE;
-	Que.pTxBuffer = pTxDummyBuffer;
-	Que.pTxD = gDummyTxDs;
-	Que.wTxBufferSize = DUMMY_BUFF_SIZE;
-	Que.wTxSize = DUMMY_SIZE;
-	Que.pTxCb = gDummyTxCbs;
-	
-	/* Init GMAC driver structure */
-	GMACD_Init(pGmacd, GMAC, ID_GMAC, GMAC_CAF_ENABLE, GMAC_NBC_DISABLE);
-	GMACD_InitTransfer(pGmacd, &Que, GMAC_QUE_2);
-	
-	GMACD_InitTransfer(pGmacd, &Que, GMAC_QUE_1);
-	
-	GMACD_InitTransfer(pGmacd, &Que0, GMAC_QUE_0);
-	GMAC_SetAddress(gGmacd.pHw, 0, gGMacAddress);
+    
+    memset(&Que, 0, sizeof(Que));
+    Que.bIsGem = 1;
+    Que.bDmaBurstLength = 4;
+    Que.pRxBuffer =pRxDummyBuffer;
+    Que.pRxD = gDummyRxDs;
+    Que.wRxBufferSize = DUMMY_BUFF_SIZE;
+    Que.wRxSize = DUMMY_SIZE;
+    Que.pTxBuffer = pTxDummyBuffer;
+    Que.pTxD = gDummyTxDs;
+    Que.wTxBufferSize = DUMMY_BUFF_SIZE;
+    Que.wTxSize = DUMMY_SIZE;
+    Que.pTxCb = gDummyTxCbs;
+    
+    /* Init GMAC driver structure */
+    GMACD_Init(pGmacd, GMAC, ID_GMAC, GMAC_CAF_ENABLE, GMAC_NBC_DISABLE);
+    GMACD_InitTransfer(pGmacd, &Que, GMAC_QUE_2);
+    
+    GMACD_InitTransfer(pGmacd, &Que, GMAC_QUE_1);
+    
+    GMACD_InitTransfer(pGmacd, &Que0, GMAC_QUE_0);
+    GMAC_SetAddress(gGmacd.pHw, 0, gGMacAddress);
 
-	/* Setup GMAC buffers and interrupts */
-	/* Configure and enable interrupt on RC compare */
-	NVIC_ClearPendingIRQ(GMAC_IRQn);
-	NVIC_EnableIRQ(GMAC_IRQn);
-	
-	/* Init GMACB driver */
-	GMACB_Init(pGmacb, pGmacd, BOARD_GMAC_PHY_ADDR);
+    /* Setup GMAC buffers and interrupts */
+    /* Configure and enable interrupt on RC compare */
+    NVIC_ClearPendingIRQ(GMAC_IRQn);
+    NVIC_EnableIRQ(GMAC_IRQn);
+    
+    /* Init GMACB driver */
+    GMACB_Init(pGmacb, pGmacd, BOARD_GMAC_PHY_ADDR);
 
-	/* PHY initialize */
-	if (!GMACB_InitPhy(pGmacb, BOARD_MCK,  &gmacResetPin, 1,  gmacPins, PIO_LISTSIZE( gmacPins )))
-	{
-		//printf( "P: PHY Initialize ERROR!\n\r" ) ;
-		return;
-	}
+    /* PHY initialize */
+    if (!GMACB_InitPhy(pGmacb, BOARD_MCK,  &gmacResetPin, 1,  gmacPins, PIO_LISTSIZE( gmacPins )))
+    {
+        //printf( "P: PHY Initialize ERROR!\n\r" ) ;
+        return;
+    }
 
-	/* Auto Negotiate, work in RMII mode */
-	if (!GMACB_AutoNegotiate(pGmacb))
-	{
-		//printf( "P: Auto Negotiate ERROR!\n\r" ) ;
-		return;
-	}
-	
-	
-	//printf( "P: Link detected \n\r" ) ;
+    /* Auto Negotiate, work in RMII mode */
+    if (!GMACB_AutoNegotiate(pGmacb))
+    {
+        //printf( "P: Auto Negotiate ERROR!\n\r" ) ;
+        return;
+    }
+    
+    
+    //printf( "P: Link detected \n\r" ) ;
 }
 
 #endif

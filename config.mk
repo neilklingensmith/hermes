@@ -1,0 +1,12 @@
+
+CFLAGS += -DCONFIG_HERMES_RELEASE="\"0.1.0\""
+GITHASH := -DGIT_HASH=$(shell git log -n 1 --pretty=format:\"%H\")
+CFLAGS += $(GITHASH)
+
+CPUTYPE=cortex-m7
+
+
+# Hypervisor Stack Size
+CFLAGS+=-D HV_STACK_SIZE=4096
+CFLAGS+=-D HERMES_ETHERNET_BRIDGE=1
+CFLAGS+=-D HERMES_INTERNAL_DMA=1
