@@ -39,6 +39,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "nalloc.h"
 
 // Number of bytes to round all allocations to
 #define ALIGNSIZE 2

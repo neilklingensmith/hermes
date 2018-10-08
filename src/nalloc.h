@@ -9,7 +9,7 @@
 #ifndef NALLOC_H_
 #define NALLOC_H_
 
-void memInit();
+void memInit(void);
 void *nalloc(int size);
 void nfree(void *block);
 

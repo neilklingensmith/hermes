@@ -1,4 +1,4 @@
-RTOS_IDIR =-I./src/includes -I../includes
+HERMES_IDIR =-I./src
 HERMES_ODIR=./obj
 HERMES_SDIR=./src
 HERMES_OBJS = \
@@ -18,12 +18,13 @@ HERMES_OBJS = \
 HERMES_OBJ = $(patsubst %,$(HERMES_ODIR)/%,$(HERMES_OBJS))
 
 HERMES_OBJFILENAME=hermes
-HERMES_CFLAGS+=-DDEBUG -Os -g -s -Wall -mcpu=$(CPUTYPE) $(RTOS_IDIR) -fno-inline -fno-keep-static-consts -fmerge-all-constants
-CC=arm-linux-gnueabi-gcc
-OBJDUMP=arm-linux-gnueabi-objdump
-OBJCOPY=arm-linux-gnueabi-objcopy
-AR=arm-linux-gnueabi-ar
-
+HERMES_CFLAGS+=-Wall -Wstrict-prototypes -Wmissing-prototypes -std=gnu99 -fno-strict-aliasing -ffunction-sections -fdata-sections -Wchar-subscripts -Wcomment -Wimplicit-int -Wmain -Wparentheses -Wsequence-point -Wswitch -Wtrigraphs -Wunused -Wuninitialized -Wunknown-pragmas -Wfloat-equal -Wundef -Wshadow -Wwrite-strings -Wsign-compare -Waggregate-return -Wmissing-declarations -Wformat -Wmissing-format-attribute -Wno-deprecated-declarations -Wpacked -Wredundant-decls -Wnested-externs -Winline -Wlong-long -Wunreachable-code -Wcast-align --param max-inline-insns-single=500 
+HERMES_CFLAGS+=-O0 -g -s -Wall -mthumb -mcpu=$(CPUTYPE) $(HERMES_IDIR)
+CC=arm-none-eabi-gcc
+OBJDUMP=arm-none-eabi-objdump
+OBJCOPY=arm-none-eabi-objcopy
+AR=arm-none-eabi-ar
+SIZE=arm-none-eabi-size
 
 # was in next line at end: $(DEPS)
 $(HERMES_ODIR)/%.o: $(HERMES_SDIR)/%.c
@@ -57,4 +58,4 @@ flash: $(HERMES_OBJ)
 #	cp $(OBJFILENAME) $(OBJFILENAME).elf
 #	cp $(OBJFILENAME) $(OBJFILENAME).flash
 #	$(OBJCOPY) -O srec $(OBJFILENAME).flash
-	m68k-elf-size --common lib$(HERMES_OBJFILENAME).a
+	$(SIZE) --common lib$(HERMES_OBJFILENAME).a

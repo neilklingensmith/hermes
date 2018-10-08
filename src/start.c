@@ -45,7 +45,8 @@ void *ramVectors[80]  __attribute__ ((aligned (128))); // RAM-located vector tab
 struct interrupt intlist[NUM_PERIPHERAL_INTERRUPTS];
 
 
-extern void genericHandler();
+extern struct vm *guestList, *sleepingList, *currGuest; // Defined in the scheduler
+
 
 __attribute__ ((section(".vectors")))
 void *hvVectorTable[] __attribute__ ((aligned (128))) = {
@@ -209,7 +210,7 @@ void hermesResetHandler(){
     }
 
     // Hardware init
-#ifdef HERMES_ETHERNET_BRIDGE
+#if HERMES_ETHERNET_BRIDGE == 1
     /* Configure systick for 1 ms. */
     extern void TimeTick_Configure(void);
     TimeTick_Configure();
@@ -223,7 +224,7 @@ void hermesResetHandler(){
     void SysTick_Handler(void);
     ramVectors[15] = SysTick_Handler;
 
-    uint8_t macaddr[] = {0x3a, 0x1f, 0x34, 0x08, 0x54, 0x54};
+//    uint8_t macaddr[] = {0x3a, 0x1f, 0x34, 0x08, 0x54, 0x54};
     gmac_tapdev_init_hermes();
     CORTEXM7_SYST_CVR = 0xc0; // Reset the system timer so we don't get a SysTick exception before we start the HV
     ramVectors[15] = hvVectorTable[15];
@@ -232,7 +233,7 @@ void hermesResetHandler(){
 
     // Set interrupt enable registers to 1's. Only enable interrupts that are implemented on this chip.
     asm("cpsid i"); // Globally disable interrupts during setup.
-    pB = 0xe000e100;
+    pB = (uint8_t*)0xe000e100;
     for(i = 0; i < NUM_PERIPHERAL_INTERRUPTS/8; i++){
         *pB++ = 0xff;
     }

@@ -181,13 +181,16 @@ struct listElement {
     struct listElement *prev;
 };
 
-void hvInit();
+void hvInit(void);
+struct vm *createGuest(void *guestExceptionTable);
 void ioInit(void);
 void guestInit(void);
 void exceptionProcessor(void) ;
-void genericHandler() __attribute__((naked));
-void hermesResetHandler();
+void genericHandler(void);
+void hermesResetHandler(void);
 int listAdd(struct vm **head, struct vm *newElement);
+void listRemove(struct vm *element);
+int hvScheduler(uint32_t *psp);
 
 
 #if HERMES_ETHERNET_BRIDGE == 1

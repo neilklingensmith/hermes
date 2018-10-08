@@ -38,7 +38,7 @@ SOFTWARE.
  * Rotates x left by n bits
  *
  */
-uint32_t rotl32 (uint32_t x, uint32_t n)
+static uint32_t rotl32 (uint32_t x, uint32_t n)
 {
     //assert (n<32);
     return (x<<n) | (x>>(-n&31));
@@ -50,7 +50,7 @@ uint32_t rotl32 (uint32_t x, uint32_t n)
  * Rotates x right by n bits
  *
  */
-uint32_t rotr32 (uint32_t x, uint32_t n)
+static uint32_t rotr32 (uint32_t x, uint32_t n)
 {
     //assert (n<32);
     return (x>>n) | (x<(-n&31));
@@ -61,13 +61,13 @@ void *effectiveAddress(struct inst *instruction, struct vm *guest){
     // Compute the effective address of the instruction
     switch(instruction->type){
         case THUMB_TYPE_LDSTREG:
-            return guest->guest_regs[instruction->Rn] + guest->guest_regs[instruction->Rm];
+            return (void*)(guest->guest_regs[instruction->Rn] + guest->guest_regs[instruction->Rm]);
         case THUMB_TYPE_LDSTWORDBYTE:
         case THUMB_TYPE_LDSTHALFWORD:
         case THUMB_TYPE_LDSTSINGLE:
-            return guest->guest_regs[instruction->Rn] + (instruction->imm<<2);
+            return (void*)(guest->guest_regs[instruction->Rn] + (instruction->imm<<2));
         case THUMB_TYPE_LDST:
-            return guest->guest_regs[instruction->Rn] + (instruction->imm);
+            return (void*)(guest->guest_regs[instruction->Rn] + (instruction->imm));
         default:
             return (void*)-1;
     }

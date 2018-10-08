@@ -29,34 +29,48 @@ SOFTWARE.
 ///////////////////////////////////////////////
 // Includes
 
+
+// CPU Device definitions from CMSIS
+//#if CPUTYPE == same70q21
+#include "same70q21.h"
+//#endif
+
 //#include "chip.h"
 #include "hermes.h"
-#ifdef HERMES_ETHERNET_BRIDGE
+#if HERMES_ETHERNET_BRIDGE == 1
 //#include "libboard/include/gmacb_phy.h"
 #include "virt_eth.h"
-#endif
 #include "libchip/chip.h"
+#include "libboard/board.h"
+#endif
 #include "nalloc.h"
 #include "instdecode.h"
-#include "libboard/board.h"
 #include <stdint.h>
 #include <string.h>
 
 ///////////////////////////////////////////////
 // Function Prototypes
 
+#if HERMES_ETHERNET_BRIDGE == 1
 void XDMAC_Handler1();
+#endif
 
 ///////////////////////////////////////////////
 // Global Variables
 
+
+#if HERMES_INTERNAL_DMA == 1
 extern sXdmad lcdSpiDma;
+#endif
 
+// Memory in RAM to hold code to execute privileged instructions.
+// Defined as a uint16_t in order to align it correctly (and supress compiler warning).
+uint16_t privexe[32];
 
-char privexe[64]; // memory to hold code to execute privileged instructions.
 extern struct vm *guestList, *sleepingList, *currGuest; // Defined in the scheduler
+extern struct interrupt intlist[NUM_PERIPHERAL_INTERRUPTS];
 
-#ifdef HERMES_ETHERNET_BRIDGE
+#if HERMES_ETHERNET_BRIDGE == 1
 
 char eth_buf[ETH_BUF_SIZE+2]; // Buffer for Ethernet frames
 
@@ -77,8 +91,8 @@ GMacb gGmacb __attribute__ ((aligned (32))); // The GMACB driver instance
  * instruction to be executed.
  *
  */
-void dummyfunc() __attribute__((naked));
-void dummyfunc()
+void dummyfunc(void) __attribute__((naked));
+void dummyfunc(void)
 {
     __asm volatile (
     "  push {r1-r12,r14}\n"
@@ -100,6 +114,7 @@ void dummyfunc()
     "  str r1, [r0]\n"
     "  pop {r1-r12,r14}\n"
     "  bx lr\n"
+    "  .word  currGuest\n"
     );
 }
 
@@ -115,7 +130,7 @@ struct vm *createGuest(void *guestExceptionTable){
         return NULL;
     }
 
-    listAdd((struct listElement **)&guestList, (struct listElement *)newGuest);
+    listAdd(&guestList, newGuest);
     newGuest->guest_regs = new_guest_regs;
     
     // Initialize the SCB
@@ -139,7 +154,7 @@ struct vm *createGuest(void *guestExceptionTable){
     newGuest->isrlist = NULL;
 
     // Set up the new guest's master stack
-    newGuest->MSP = (((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8;
+    newGuest->MSP = (uint32_t*)((((uint32_t*)(newGuest->virtualSCB->VTOR))[0] - 32) & 0xfffffff8);
     memset(newGuest->MSP, 0, 32);// zero out the guest's exception stack frame
     ((uint32_t*)newGuest->MSP)[6] = ((uint32_t*)newGuest->virtualSCB->VTOR)[1] | 1;
     ((uint32_t*)newGuest->MSP)[7] =  (1<<24); // We're returning to an exception handler, so stack frame holds EPSR. Set Thumb bit to 1.
@@ -174,7 +189,7 @@ void hvInit() {
  * Parses the guest's exception table, and returns the address of the guest's
  * exception handler associated with interruptNum, the exception number.
  */
-uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
+static uint32_t *locateGuestISR(struct vm *guest, int interruptNum){
     return (uint32_t*)((uint32_t*)guest->virtualSCB->VTOR)[interruptNum]; // stub that returns function pointer to guest exception table.
 }
 
@@ -235,11 +250,12 @@ void genericHandler(){
  *
  *
  */
-void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *instruction)
+static void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *instruction)
 {
     char *srcptr = (char*)&dummyfunc;
     memcpy(privexe, (char*)((uint32_t)srcptr & 0xfffffffe), 64); // Copy dummyfunc into privexe array. NOTE: the (srcptr & 0xfe) is a workaround because gcc always adds 1 to the address of a function pointer because
-    *((uint32_t*)(privexe+14)) = 0xbf00bf00; // Set the target instructions in privexe to NOPs
+    *((uint16_t*)(privexe+14)) = 0xbf00; // Set the target instructions in privexe to NOPs
+    *((uint16_t*)(privexe+16)) = 0xbf00; // Set the target instructions in privexe to NOPs
 
     memcpy(privexe+14, (char*)offendingInstruction, instruction->nbytes);
     SCB_InvalidateICache();
@@ -264,7 +280,7 @@ void executePrivilegedInstruction(uint16_t *offendingInstruction, struct inst *i
  * Sets up a guest's stack to jump to an exception on return from the genericHandler.
  *
  */
-int placeExceptionOnGuestStack(struct vm *guest, uint32_t *psp, uint32_t exceptionNum) {
+static void placeExceptionOnGuestStack(struct vm *guest, uint32_t *psp, uint32_t exceptionNum) {
     uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
     uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
 
@@ -312,7 +328,7 @@ int placeExceptionOnGuestStack(struct vm *guest, uint32_t *psp, uint32_t excepti
  * address it held, but that seems like a bitch.
  *
  */
-uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFaultAddress)
+static uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFaultAddress)
 {
     int i;
     struct inst instruction;
@@ -344,7 +360,7 @@ uint16_t *trackImpreciseBusFault(uint16_t *offendingInstruction, uint32_t busFau
  * locate the instruction that caused a bus fault.
  *
  */
-uint16_t *findLastPrivilegedMemoryAccess(uint16_t *startingAddress)
+static uint16_t *findLastPrivilegedMemoryAccess(uint16_t *startingAddress)
 {
     int i;
     struct inst instruction;
@@ -370,7 +386,7 @@ uint16_t *findLastPrivilegedMemoryAccess(uint16_t *startingAddress)
  * address of the MRS/MSR instruction.
  *
  */
-uint16_t *trackMRS(uint16_t *offendingInstruction){
+static uint16_t *trackMRS(uint16_t *offendingInstruction){
     int i;
     struct inst instruction;
 
@@ -391,7 +407,7 @@ uint16_t *trackMRS(uint16_t *offendingInstruction){
  * address of the CPS instruction.
  *
  */
-uint16_t *trackCPS(uint16_t *offendingInstruction){
+static uint16_t *trackCPS(uint16_t *offendingInstruction){
     int i;
     struct inst instruction;
 
@@ -412,7 +428,7 @@ uint16_t *trackCPS(uint16_t *offendingInstruction){
  * address of the WFE/WFI instruction.
  *
  */
-uint16_t *trackWFE(uint16_t *offendingInstruction){
+static uint16_t *trackWFE(uint16_t *offendingInstruction){
     int i;
     struct inst instruction;
 
@@ -431,7 +447,7 @@ uint16_t *trackWFE(uint16_t *offendingInstruction){
  * Emulate accesses to the SCB made by guest with instruction at location.
  *
  */
-int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
+static int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
 
     uint32_t *ea = effectiveAddress(instruction, guest);
     uint32_t icsrVal;
@@ -477,6 +493,8 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
             icsrVal = guest->guest_regs[instruction->Rd];
         } else if (instruction->Rt != 0xff) {
             icsrVal = guest->guest_regs[instruction->Rt];
+        } else { // Couldn't decode instruction...
+            return -1;
         }
         if(icsrVal & (1<<28)){ // PendSV Set Bit
             guest->virtualSCB->ICSR |= (1<<28);
@@ -520,7 +538,7 @@ int emulateSCBAccess(struct vm *guest, uint16_t *location, struct inst *instruct
  * Emulate accesses to the SCB made by guest with instruction at location.
  *
  */
-int emulateSysTickAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
+static int emulateSysTickAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
     uint32_t *ea = effectiveAddress(instruction, guest);
     if(instruction->mnemonic[0] == 'L'){
     } else if(instruction->mnemonic[0] == 'S'){
@@ -569,33 +587,21 @@ int emulateSysTickAccess(struct vm *guest, uint16_t *location, struct inst *inst
  * updating the hardware registers.
  *
  */
-int emulateNVICAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
+static int emulateNVICAccess(struct vm *guest, uint16_t *location, struct inst *instruction){
     uint32_t *ea = effectiveAddress(instruction, guest);
     if(instruction->mnemonic[0] == 'L'){
     } else if(instruction->mnemonic[0] == 'S'){
-        if((ea >= 0xE000E100) && (ea <= 0xE000E11C)){ // ISER access
-        } else if ((ea >= 0xE000E180) && (ea <= 0xE000E19C)){ // ICER access
-        } else if ((ea >= 0xE000E200) && (ea <= 0xE000E21c)){ // ISPR access
-        } else if ((ea >= 0xE000E280) && (ea <= 0xE000E29c)){ // ICPR access
-        } else if ((ea >= 0xE000E300) && (ea <= 0xE000E31c)){ // IABR access
-        } else if ((ea >= 0xE000E400) && (ea <= 0xE000E4ef)){ // IPR access
+        if((ea >= (uint32_t*)0xE000E100) && (ea <= (uint32_t*)0xE000E11C)){ // ISER access
+        } else if ((ea >= (uint32_t*)0xE000E180) && (ea <= (uint32_t*)0xE000E19C)){ // ICER access
+        } else if ((ea >= (uint32_t*)0xE000E200) && (ea <= (uint32_t*)0xE000E21c)){ // ISPR access
+        } else if ((ea >= (uint32_t*)0xE000E280) && (ea <= (uint32_t*)0xE000E29c)){ // ICPR access
+        } else if ((ea >= (uint32_t*)0xE000E300) && (ea <= (uint32_t*)0xE000E31c)){ // IABR access
+        } else if ((ea >= (uint32_t*)0xE000E400) && (ea <= (uint32_t*)0xE000E4ef)){ // IPR access
             return 0;// Ignore writes to the IPRs
         }
     }
     executePrivilegedInstruction(location, instruction);
     return 0;
-}
-
-/*
- * configureNVIC
- *
- * Configures the hardware NVIC according to the settings stored in the VM's
- * virtual NVIC. Called in preparation to run a different guest (during a VM
- * context switch).
- *
- */
-int configureNVIC(struct vm *guest){
-    
 }
 
 /*
@@ -608,15 +614,14 @@ int configureNVIC(struct vm *guest){
 void exceptionProcessor() {
 
     uint32_t exceptionNum;
-    void *guestExceptionVector; // Get the address of the guest's exception handler corresponding to the exception number
     uint16_t *offendingInstruction, *guestPC; // Address of instruction that caused the exception
     uint32_t *psp;
-    uint32_t busFaultStatus,auxBusFaultStatus,usageFaultStatus; // Fault status regs.
+    uint32_t busFaultStatus,usageFaultStatus; // Fault status regs.
     uint32_t busFaultAddress; // Address in program mem that caused bus fault
     uint32_t *newStackFrame; // Pointer to new stack frame when we're changing processor state (master/thread) or entering a guest ISR
     struct inst instruction; // Instruction that caused the exception for bus faults and usage faults (emulated privileged instrs)
     uint32_t newLR; // New Link Reg, used when we're setting up to enter a guest exception handler
-#ifdef HERMES_ETHERNET_BRIDGE
+#if HERMES_ETHERNET_BRIDGE == 1
     uint32_t pkt_len;
 #endif
     //static int count = 0;
@@ -725,26 +730,32 @@ void exceptionProcessor() {
                 *(psp+6) += instruction.nbytes;
             }
 
-            if((int32_t)offendingInstruction != (uint16_t*)-1) { // HACK ALERT!! Hack to avoid problem of unexplained access to 0xe000ed20
+            if(offendingInstruction != (uint16_t*)-1) { // HACK ALERT!! Hack to avoid problem of unexplained access to 0xe000ed20
 
                 uint32_t *ea = (uint32_t*)effectiveAddress(&instruction,currGuest);
                 
                 // TODO: Should emulate NVIC here too
                 
                 // If this is a load/store to the SCB, then we have special code to emulate SCB accesses.
-                if(((ea >= 0xe000ed00) && (ea < 0xe000ed40) || (ea == 0xe000e008)) &&
-                   ((instruction.type == THUMB_TYPE_LDSTREG) ||
-                   (instruction.type == THUMB_TYPE_LDSTWORDBYTE) ||
-                   (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
-                   (instruction.type == THUMB_TYPE_LDSTSINGLE))){
-                    emulateSCBAccess(currGuest, offendingInstruction, &instruction);
-                } else if(((ea >= 0xE000E010) && (ea <= 0xE000E01C)) &&
+                if((((ea >= (uint32_t*)0xe000ed00) && 
+                    (ea < (uint32_t*)0xe000ed40)) ||
+                    (ea == (uint32_t*)0xe000e008)) &&
+                    ((instruction.type == THUMB_TYPE_LDSTREG) ||
+                    (instruction.type == THUMB_TYPE_LDSTWORDBYTE) ||
+                    (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
+                    (instruction.type == THUMB_TYPE_LDSTSINGLE))){
+                    if(emulateSCBAccess(currGuest, offendingInstruction, &instruction)){
+                        // VM PANIC!!!
+                        while(1);
+                    }
+                } else if(((ea >= (uint32_t*)0xE000E010) &&
+                           (ea <= (uint32_t*)0xE000E01C)) &&
                           ((instruction.type == THUMB_TYPE_LDSTREG) ||
                           (instruction.type == THUMB_TYPE_LDSTWORDBYTE) ||
                           (instruction.type == THUMB_TYPE_LDSTHALFWORD) ||
                           (instruction.type == THUMB_TYPE_LDSTSINGLE))){
                     emulateSysTickAccess(currGuest, offendingInstruction, &instruction);
-                } else if ( ((ea >= 0xe000e100) && (ea <= 0xe000e4ef)) || (ea == 0xe000ef00)) {
+                } else if ( ((ea >= (uint32_t*)0xe000e100) && (ea <= (uint32_t*)0xe000e4ef)) || (ea == (uint32_t*)0xe000ef00)) {
                      emulateNVICAccess(currGuest, offendingInstruction, &instruction);
                 } else {
                     // If not a load/store to the SCB, then just blindly execute the instr.
@@ -777,7 +788,7 @@ void exceptionProcessor() {
                 *(psp+6) += 2;
 
                 offendingInstruction = trackMRS(guestPC-1); // Find the MRS/MSR instruction assoc'd with the illegal instruction.
-                if(offendingInstruction != -1){
+                if(offendingInstruction != (uint16_t*)-1){
                     instDecode(&instruction, offendingInstruction); // Decode the instruction
                     switch(instruction.imm){ // instDecode places the register number in instruction.imm
                     case MRS_REGISTER_MSP:
@@ -834,7 +845,7 @@ void exceptionProcessor() {
                 // guest code is free from exceptions.
                 offendingInstruction = trackCPS(guestPC-1);
                 // If the previous instruction was a CPS, then update the VM's PRIMASK
-                if(offendingInstruction != -1){
+                if(offendingInstruction != (uint16_t*)-1){
                     instDecode(&instruction, offendingInstruction); // Decode the instruction
                     switch(instruction.mnemonic[4]){
                     case 'D': // Interrupt disable
@@ -857,7 +868,7 @@ void exceptionProcessor() {
 
                 offendingInstruction = trackWFE(guestPC-1);
                 // If the previous instruction was a wait for event or wait for interrupt, then the guest was trying to put the CPU to sleep. Un-schedule the guest and run the scheduler.
-                if(offendingInstruction != -1){
+                if(offendingInstruction != (uint16_t*)-1){
                     struct vm *oldGuest = currGuest;
 
 
@@ -874,8 +885,8 @@ void exceptionProcessor() {
                         currGuest = guestList;
                     }
 
-                    listRemove((struct listElement*)oldGuest);
-                    listAdd((struct listElement **)&sleepingList, (struct listElement *)oldGuest);                  
+                    listRemove(oldGuest);
+                    listAdd(&sleepingList, oldGuest);                  
                     SET_CPU_BASEPRI(currGuest->BASEPRI);
                     
                     // Install the new guest's PSP
@@ -939,7 +950,7 @@ void exceptionProcessor() {
                 struct vm* temp;
                 while(sleepIterator != NULL){
                     // If this guest's SysTick module is not enabled, then we will not modify its CVR
-                    if(sleepIterator->virtualSysTick->CSR & 1 == 0){
+                    if((sleepIterator->virtualSysTick->CSR & 1) == 0){
                         sleepIterator = sleepIterator->next;
                         continue;
                     }
@@ -953,8 +964,8 @@ void exceptionProcessor() {
                         SET_CPU_BASEPRI(0x01);
 
                         temp = sleepIterator->next;
-                        listRemove((struct listElement*)sleepIterator);
-                        listAdd((struct listElement**)&guestList, (struct listElement*)sleepIterator);
+                        listRemove(sleepIterator);
+                        listAdd(&guestList, sleepIterator);
                         sleepIterator = temp;
                     } else {
                         sleepIterator = sleepIterator->next;
@@ -964,7 +975,6 @@ void exceptionProcessor() {
 
             do{
                 struct vm *guestIterator = guestList;
-                struct vm* temp;
                 while(guestIterator != NULL){
                     // If this guest's SysTick module is not enabled, then we will not modify its CVR
                     if((guestIterator->virtualSysTick->CSR & 1) == 0){
@@ -997,7 +1007,6 @@ void exceptionProcessor() {
                             // Save the PSP if necessary
                             psp = guestIterator->MSP;
                         } else { ///////////////////////// BUG TRACKING ELSE BLOCK
-                            uint32_t junk = psp;
                         }
                         guestIterator = guestIterator->next;
                     } else {
@@ -1009,13 +1018,13 @@ void exceptionProcessor() {
             hvScheduler(psp);
 
             return;
-#ifdef HERMES_INTERNAL_DMA:
+#if HERMES_INTERNAL_DMA == 1
         case SAME70_DMA_ISR_NUM:
             
             XDMAD_Handler(&lcdSpiDma);
             break;
 #endif
-#ifdef HERMES_ETHERNET_BRIDGE
+#if HERMES_ETHERNET_BRIDGE == 1
         case SAME70_ETHERNET_ISR_NUM:
             GMACD_Handler(&gGmacd,0);
             
@@ -1077,8 +1086,8 @@ void exceptionProcessor() {
                 currGuest = intlist[exceptionNum-16].owner;
 
                 // If the guest was sleeping, put it back on the active list.
-                listRemove((struct listElement*)currGuest);
-                listAdd((struct listElement **)&guestList, (struct listElement *)currGuest);
+                listRemove(currGuest);
+                listAdd(&guestList, currGuest);
 
                 SET_CPU_BASEPRI(intlist[exceptionNum-16].priority);
             } else {

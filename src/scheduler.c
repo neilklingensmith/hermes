@@ -47,7 +47,7 @@ struct vm *guestList = NULL, *sleepingList = NULL, *currGuest = NULL;
  *
  */
 int listAdd(struct vm **head, struct vm *newElement){
-    struct vm *iterator = (struct listElement*)head ;
+    struct vm *iterator = (struct vm*)head ;
     
     // Sort the list by BASEPRI
     while((iterator->next->BASEPRI <= newElement->BASEPRI) /*&& (iterator->next->BASEPRI != 0)*/ && (iterator->next != NULL)){
@@ -72,7 +72,7 @@ int listAdd(struct vm **head, struct vm *newElement){
  *
  * Deletes an element from a doubly linked list.
  */
-void listRemove(struct listElement *element)
+void listRemove(struct vm *element)
 {
     if(element->next != NULL)
         element->next->prev = element->prev ;
@@ -95,15 +95,6 @@ int hvScheduler(uint32_t *psp){
         currGuest->PSP = psp;
     }
 
-#if 0
-    // Dumb scheduler. Cycle thru guests.
-    if(currGuest->next != NULL){
-        currGuest = currGuest->next;
-    } else {
-        currGuest = guestList;
-    }
-#endif
-
     if((guestList->next->next!= NULL) && (guestList->next->BASEPRI == guestList->next->next->BASEPRI)){
         struct vm *topGuest = guestList;
         listRemove(topGuest);
@@ -122,12 +113,11 @@ int hvScheduler(uint32_t *psp){
 
     if(GET_PROCESSOR_EXCEPTION(currGuest) != 0){
         __asm volatile(
-        //      "mrs %0,basepri\n" // Save the guest's BASEPRI
         "movs r0, 0xff\n"  // set the guest's BASEPRI to 0xff to disable interrupts while we're running the guest's ISR
         "msr basepri,r0\n"
-        ://"=r"(currGuest->BASEPRI) // output
-        :                         // input
-        :"r0"                     // clobbered register
+        :       // output
+        :       // input
+        :"r0"   // clobbered register
         );
         } else {
         SET_CPU_BASEPRI(currGuest->BASEPRI);
