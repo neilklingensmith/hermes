@@ -19,7 +19,8 @@ HERMES_OBJ = $(patsubst %,$(HERMES_ODIR)/%,$(HERMES_OBJS))
 
 HERMES_OBJFILENAME=hermes
 HERMES_CFLAGS+=-Wall -Wstrict-prototypes -Wmissing-prototypes -std=gnu99 -fno-strict-aliasing -ffunction-sections -fdata-sections -Wchar-subscripts -Wcomment -Wimplicit-int -Wmain -Wparentheses -Wsequence-point -Wswitch -Wtrigraphs -Wunused -Wuninitialized -Wunknown-pragmas -Wfloat-equal -Wundef -Wshadow -Wwrite-strings -Wsign-compare -Waggregate-return -Wmissing-declarations -Wformat -Wmissing-format-attribute -Wno-deprecated-declarations -Wpacked -Wredundant-decls -Wnested-externs -Winline -Wlong-long -Wunreachable-code -Wcast-align --param max-inline-insns-single=500 
-HERMES_CFLAGS+=-O0 -g -s -Wall -mthumb -mcpu=$(CPUTYPE) $(HERMES_IDIR)
+HERMES_CFLAGS+=-O0 -g3 -s -Wall -mthumb -mcpu=$(CPUTYPE) $(HERMES_IDIR)
+HERMES_CFLAGS+=-Wl,-nostartfiles -Wl,-nostdlib
 CC=arm-none-eabi-gcc
 OBJDUMP=arm-none-eabi-objdump
 OBJCOPY=arm-none-eabi-objcopy

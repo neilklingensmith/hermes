@@ -1,9 +1,10 @@
 
 DEVPATH := ./src/devices/microchip/sam
 
-GITHASH := -DGIT_HASH=$(shell git log -n 1 --pretty=format:\"%H\")
+#GITHASH := -DGIT_HASH=$(shell git log -n 1 --pretty=format:\"%H\")
 
-LDFLAGS := -T $(DEVPATH)/same70q21.ld
+LINKERSCRIPT := $(DEVPATH)/same70q21.ld
+#LDFLAGS := -T $(LINKERSCRIPT) -nostdlib
 
 # Device-specific CMSIS includes
 CFLAGS += -I$(DEVPATH)/cmsis

@@ -59,3 +59,11 @@ have two sections: the first 16 vectors are exceptions (bus fault, usage fault,
 etc.), and the remaining vectors are for peripheral interrupts. In the above
 example, the UART3 interrupt is at offset 45 in the peripheral section of the
 vector table, which is at offset 45+16=60 from the start of the vector table.
+
+To create guestinit.c from guests.conf, run:
+
+    # ./guestsetup.py guests.conf > src/guestinit.c
+
+Be aware that this will overwrite the existing guestinit.c.
+
+
