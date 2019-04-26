@@ -67,3 +67,19 @@ To create guestinit.c from guests.conf, run:
 Be aware that this will overwrite the existing guestinit.c.
 
 
+# Device-Specific Stuff
+
+## FitBit Charge
+
+### Pinout
+
+Some of these might be wrong. These are mostly notes for Neil.
+
+
+
+ | Test Point   | Debug Header Signal | MCU Pin |
+ |--------------|---------------------|---------|
+ | TP12         | SWCLK               | C3      |
+ | TP2 or TP3   | VDD                 | H1      |
+ | TP32         | NRST                | E7      |
+ | TP11         | SWDIO               | C3      |
